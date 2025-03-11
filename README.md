@@ -2,7 +2,7 @@
 
 ![image](https://github.com/user-attachments/assets/5865907a-479d-41f5-9479-3fd36e4a3d76)
 
-*Figure legend: Effect size interpretation strategies in ecology and evolution.* 
+*Figure legend: Effect size interpretation strategies in ecology and evolution.* (figure credit: Malgorzata Lagisz & Shinichi Nakagawa)
 
 ## Transparency declaration
 
