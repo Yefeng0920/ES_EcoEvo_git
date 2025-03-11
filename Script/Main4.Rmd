@@ -1,0 +1,2414 @@
+---
+title: "Calibrating effect size interpretation in ecology and evolution: A quantitative synthesis of 100,000 observations"
+subtitle: "Code for replicating the main analysis"
+author: "Yefeng Yang, František Bartoš, Jinming Pan, Malgorzata Lagisz, & Shinichi Nakagawa"
+date: "03-11-2025"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+# Required packages
+
+```{r setup, echo = FALSE}
+# tidy
+ # rm(list=ls())
+ # graphics.off()
+# prepare workspace
+knitr::opts_chunk$set(echo = TRUE, include = TRUE)
+# load packages
+pacman::p_load(knitr,
+               readxl, 
+               readr, 
+               metafor, 
+               dplyr, 
+               RoBMA,
+               tidyverse,
+               clubSandwich,
+               janitor, 
+               cowplot, 
+               ggpubr,
+               gridExtra,
+               here,
+               nlme,
+               lme4,
+               RoBMA,
+               metaSEM,
+               vcd,
+               irr,
+               boot,
+               tidyr,
+               ggthemes,
+               RColorBrewer,
+               wesanderson,
+               ggsci,
+               ggplotify,
+               cowplot,
+               patchwork,
+               aplot,
+               UpSetR,
+               ComplexUpset,
+               ggplot2,
+               kldtools
+               )
+
+```
+
+
+# Data
+
+We load the raw data `dat_ecoevo_SMD.zr.rds` and `dat_ecoevo_lnRR.rds`, respectively. `dat_ecoevo_SMD.zr.rds` contains meta-analysis datasets using `SMD` and `zr` as the effect size measure, while `dat_ecoevo_lnRR.rds` contains meta-analysis datasets using `lnRR` as the effect size measure.
+
+```{r}
+# load subset of SMD and zr
+dat_SMD.zr <- readRDS(here("Dat", "dat_ecoevo_SMD.zr.rds"))
+# name
+names(dat_SMD.zr) <- 1:length(dat_SMD.zr)
+# remove 90th, 91st, and 92nd data frames because they did not contain enough information to fit a robust Bayesian model average
+dat_SMD.zr <- dat_SMD.zr[-c(90, 91, 92)]
+
+# load subset of lnRR
+dat_lnRR <- readRDS(here("Dat", "dat_ecoevo_lnRR.rds"))
+```
+
+
+# Modelling
+
+We fit four models to each of the meta-analysis dataset:
+
+- Naïve MLMA-SVCV model
+
+The naïve multilevel meta-analysis model with sampling variance-covariance matrix
+
+- Calibration 1: two-step RPVE
+
+Two-step robust point and variance estimation (alternatively, double robust estimation)
+
+- Calibration 2: PETPEESE-ISVCVW
+
+Extended PETPEESE with inverse sampling variance-covariance weighting
+
+- Calibration 3: RoBMA-PSMA
+
+Robust Bayesian meta-analysis with publication selection model-averaging
+
+
+## Naïve MLMA-SVCV model
+
+For technical details, please refer to Equation1.
+
+```{r}
+#-------------------------------------#
+#subset of SMD and zr
+#-------------------------------------#
+
+# create an empty list to store model results about SMD and zr
+res_SMD.zr <- vector("list", length(dat_SMD.zr)) 
+error_log <- vector("list", length(dat_SMD.zr))
+
+# loop
+for (i in seq_along(dat_SMD.zr)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_SMD.zr[[i]], rho = 0.5)
+    
+    # fit the meta-analysis model
+    res_SMD.zr[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V, 
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_SMD.zr[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    res_SMD.zr[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+# display non-null errors
+# print(error_log[!sapply(error_log, is.null)])  
+
+# save results for later inspection
+# saveRDS(res_SMD.zr, here("Dat", "res_SMD.zr.RData"))
+res_SMD.zr <- readRDS(here("Dat", "res_SMD.zr.RData"))
+
+#-------------------------------------#
+#subset of lnRR
+#-------------------------------------#
+# create an empty list to store model results about lnRR
+res_lnRR <- vector("list", length(dat_lnRR)) 
+error_log <- vector("list", length(dat_lnRR))
+
+# loop
+for (i in seq_along(dat_lnRR)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_lnRR[[i]], rho = 0.5)
+    
+    # fit the meta-analysis model
+    res_lnRR[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V, 
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_lnRR[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    res_lnRR[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+# save results for later inspection
+#saveRDS(res_lnRR, here("Dat", "res_lnRR.RData"))
+res_lnRR <- readRDS(here("Dat", "res_lnRR.RData"))
+```
+
+## Calibration 1: two-step RPVE
+
+For technical details, please refer to Equations 5 to 8.
+
+```{r}
+#-------------------------------------#
+#subset of SMD and zr
+#-------------------------------------#
+
+# create an empty list to store step 1 results about SMD and zr
+step1_SMD.zr <- vector("list", length(dat_SMD.zr)) 
+error_log <- vector("list", length(dat_SMD.zr))
+
+# loop
+for (i in seq_along(dat_SMD.zr)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_SMD.zr[[i]], rho = 0.5)
+    # fit the meta-analysis model
+    step1_SMD.zr[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_SMD.zr[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    step1_SMD.zr[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+
+# save results for later inspection
+# saveRDS(step1_SMD.zr, here("Dat", "step1_SMD.zr.RData"))
+
+step1_SMD.zr <- readRDS(here("Dat", "step1_SMD.zr.RData"))
+
+# step 2
+step2_SMD.zr <- NA
+for (i in 1:length(step1_SMD.zr)) {
+  step2_SMD.zr[i] <- robust(step1_SMD.zr[[i]], cluster = study, clubSandwich = TRUE) %>% list()
+}
+
+# save results for later inspection
+# saveRDS(step2_SMD.zr, here("Dat", "step2_SMD.zr.RData"))
+
+step2_SMD.zr <- readRDS(here("Dat", "step2_SMD.zr.RData"))
+
+
+#-------------------------------------#
+#subset of lnRR
+#-------------------------------------#
+
+# create an empty list to store step 1 results about SMD and zr
+step1_lnRR <- vector("list", length(dat_lnRR)) 
+error_log <- vector("list", length(dat_lnRR))
+
+# loop
+for (i in seq_along(dat_lnRR)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_lnRR[[i]], rho = 0.5)
+    # fit the meta-analysis model
+    step1_lnRR[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_lnRR[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    step1_lnRR[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+
+# save results for later inspection
+# saveRDS(step1_lnRR, here("Dat", "step1_lnRR.RData"))
+
+step1_lnRR <- readRDS(here("Dat", "step1_lnRR.RData"))
+
+# step 2
+step2_lnRR <- NA
+for (i in 1:length(step1_lnRR)) {
+  step2_lnRR[i] <- robust(step1_lnRR[[i]], cluster = study, clubSandwich = TRUE) %>% list()
+}
+
+# save results for later inspection
+# saveRDS(step2_lnRR, here("Dat", "step2_lnRR.RData"))
+
+step2_lnRR <- readRDS(here("Dat", "step2_lnRR.RData"))
+```
+
+
+## Calibration 2: PETPEESE-ISVCVW
+
+For technical details, please refer to Equations 9 & 10.
+
+```{r}
+#-------------------------------------#
+#subset of SMD and zr
+#-------------------------------------#
+
+# adjusted PET
+# create an empty list to store adjusted-PET results about SMD and zr
+adjustPET_SMD.zr <- vector("list", length(dat_SMD.zr)) 
+error_log <- vector("list", length(dat_SMD.zr))
+
+# loop
+for (i in seq_along(dat_SMD.zr)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_SMD.zr[[i]], rho = 0.5)
+    W <- solve(V)
+    # fit the meta-analysis model
+    adjustPET_SMD.zr[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      W = W, 
+      mods = sqrt(var.eff.size),
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_SMD.zr[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    adjustPET_SMD.zr[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+
+# save results for later inspection
+# saveRDS(adjustPET_SMD.zr, here("Dat", "adjustPET_SMD.zr.RData"))
+adjustPET_SMD.zr <- readRDS(here("Dat", "adjustPET_SMD.zr.RData"))
+
+# RVE
+adjustPET_SMD.zr_RVE <- vector("list", length(adjustPET_SMD.zr))  # pre-allocate space
+
+# loop
+for (i in seq_along(adjustPET_SMD.zr)) {
+  cat("Processing model:", i, "\n") 
+  
+  # check if the model is NULL due to convergence issues
+  if (is.null(adjustPET_SMD.zr[[i]])) {
+    adjustPET_SMD.zr_RVE[[i]] <- NA  # Mark as NA
+    next  # skip this iteration and move to the next model
+  }
+  
+  # RVE
+  tryCatch({
+    adjustPET_SMD.zr_RVE[[i]] <- robust(adjustPET_SMD.zr[[i]], cluster = study, clubSandwich = TRUE)
+  }, error = function(e) {
+    adjustPET_SMD.zr_RVE[[i]] <- NA  # mark as NA
+  })
+}
+
+# save results for later inspection
+# saveRDS(adjustPET_SMD.zr_RVE, here("Dat", "adjustPET_SMD.zr_RVE.RData"))
+adjustPET_SMD.zr_RVE <- readRDS(here("Dat", "adjustPET_SMD.zr_RVE.RData"))
+
+
+
+# adjusted PEESE
+# create an empty list to store adjusted-PEESE results about SMD and zr
+adjustPEESE_SMD.zr <- vector("list", length(dat_SMD.zr)) 
+error_log <- vector("list", length(dat_SMD.zr))
+
+# loop
+for (i in seq_along(dat_SMD.zr)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_SMD.zr[[i]], rho = 0.5)
+    W <- solve(V)
+    # fit the meta-analysis model
+    adjustPEESE_SMD.zr[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      W = W, 
+      mods = var.eff.size,
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_SMD.zr[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    adjustPEESE_SMD.zr[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+
+# save results for later inspection
+# saveRDS(adjustPEESE_SMD.zr, here("Dat", "adjustPEESE_SMD.zr.RData"))
+adjustPEESE_SMD.zr <- readRDS(here("Dat", "adjustPEESE_SMD.zr.RData"))
+
+# RVE
+adjustPEESE_SMD.zr_RVE <- vector("list", length(adjustPEESE_SMD.zr))  # pre-allocate space
+
+# loop
+for (i in seq_along(adjustPEESE_SMD.zr)) {
+  cat("Processing model:", i, "\n") 
+  
+  # check if the model is NULL due to convergence issues
+  if (is.null(adjustPEESE_SMD.zr[[i]])) {
+    adjustPEESE_SMD.zr_RVE[[i]] <- NA  # Mark as NA
+    next  # skip this iteration and move to the next model
+  }
+  
+  # RVE
+  tryCatch({
+    adjustPEESE_SMD.zr_RVE[[i]] <- robust(adjustPEESE_SMD.zr[[i]], cluster = study, clubSandwich = TRUE)
+  }, error = function(e) {
+    adjustPEESE_SMD.zr_RVE[[i]] <- NA  # Mark as NA
+  })
+}
+
+# save results for later inspection
+#saveRDS(adjustPEESE_SMD.zr_RVE, here("Dat", "adjustPEESE_SMD.zr_RVE.RData"))
+
+adjustPEESE_SMD.zr_RVE <- readRDS(here("Dat", "adjustPEESE_SMD.zr_RVE.RData"))
+
+
+
+#-------------------------------------#
+#subset of lnRR
+#-------------------------------------#
+# adjusted PET
+# create an empty list to store adjusted-PET results about SMD and zr
+adjustPET_lnRR <- vector("list", length(dat_lnRR)) 
+error_log <- vector("list", length(dat_lnRR))
+
+# loop
+for (i in seq_along(dat_lnRR)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_lnRR[[i]], rho = 0.5)
+    W <- solve(V)
+    # fit the meta-analysis model
+    adjustPET_lnRR[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      W = W, 
+      mods = sqrt(var.eff.size),
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_lnRR[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    adjustPET_lnRR[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+
+# save results for later inspection
+# saveRDS(adjustPET_lnRR, here("Dat", "adjustPET_lnRR.RData"))
+adjustPET_lnRR <- readRDS(here("Dat", "adjustPET_lnRR.RData"))
+
+
+# RVE
+adjustPET_lnRR_RVE <- vector("list", length(adjustPET_lnRR))  # pre-allocate space
+
+# loop
+for (i in seq_along(adjustPET_lnRR)) {
+  cat("Processing model:", i, "\n") 
+  
+  # check if the model is NULL due to convergence issues
+  if (is.null(adjustPET_lnRR[[i]])) {
+    adjustPET_lnRR_RVE[[i]] <- NA  # Mark as NA
+    next  # skip this iteration and move to the next model
+  }
+  
+  # RVE
+  tryCatch({
+    adjustPET_lnRR_RVE[[i]] <- robust(adjustPET_lnRR[[i]], cluster = study, clubSandwich = TRUE)
+  }, error = function(e) {
+    adjustPET_lnRR_RVE[[i]] <- NA  # mark as NA
+  })
+}
+
+# save results for later inspection
+# saveRDS(adjustPET_lnRR_RVE, here("Dat", "adjustPET_lnRR_RVE.RData"))
+adjustPET_lnRR_RVE <- readRDS(here("Dat", "adjustPET_lnRR_RVE.RData"))
+
+# adjusted PEESE
+# create an empty list to store adjusted-PEESE results about SMD and zr
+adjustPEESE_lnRR <- vector("list", length(dat_lnRR)) 
+error_log <- vector("list", length(dat_lnRR))
+
+# loop
+for (i in seq_along(dat_lnRR)) {
+  cat("Fitting model for data frame:", i, "\n") 
+  
+  tryCatch({
+    # calculate the variance-covariance matrix
+    V <- vcalc(vi = var.eff.size, cluster = study, obs = obs, data = dat_lnRR[[i]], rho = 0.5)
+    W <- solve(V)
+    # fit the meta-analysis model
+    adjustPEESE_lnRR[[i]] <- rma.mv(
+      yi = eff.size, 
+      V = V,
+      W = W, 
+      mods = var.eff.size,
+      random = list(~1 | study, ~1 | obs), 
+      method = "REML", 
+      test = "t", 
+      dfs = "contain", 
+      data = dat_lnRR[[i]], 
+      sparse = TRUE, 
+      control = list(optimizer = "nlminb", rel.tol = 1e-8, iter.max = 1000)
+    )
+  }, error = function(e) {
+    # capture the error message
+    error_log[[i]] <- paste("Error in data frame", i, ":", e$message)
+    adjustPEESE_lnRR[[i]] <- NA  # mark as NA for non-converging models
+    cat("Error encountered for data frame:", i, "\n") 
+  })
+}
+
+# save results for later inspection
+# saveRDS(adjustPEESE_lnRR, here("Dat", "adjustPEESE_lnRR.RData"))
+adjustPEESE_lnRR <- readRDS(here("Dat", "adjustPEESE_lnRR.RData"))
+
+
+# RVE
+adjustPEESE_lnRR_RVE <- vector("list", length(adjustPEESE_lnRR))  # pre-allocate space
+
+# loop
+for (i in seq_along(adjustPEESE_lnRR)) {
+  cat("Processing model:", i, "\n") 
+  
+  # check if the model is NULL due to convergence issues
+  if (is.null(adjustPEESE_lnRR[[i]])) {
+    adjustPEESE_lnRR_RVE[[i]] <- NA  # Mark as NA
+    next  # skip this iteration and move to the next model
+  }
+  
+  # RVE
+  tryCatch({
+    adjustPEESE_lnRR_RVE[[i]] <- robust(adjustPEESE_lnRR[[i]], cluster = study, clubSandwich = TRUE)
+  }, error = function(e) {
+    adjustPEESE_lnRR_RVE[[i]] <- NA  # mark as NA
+  })
+}
+
+# save results for later inspection
+#saveRDS(adjustPEESE_lnRR_RVE, here("Dat", "adjustPEESE_lnRR_RVE.RData"))
+adjustPEESE_lnRR_RVE <- readRDS(here("Dat", "adjustPEESE_lnRR_RVE.RData"))
+```
+
+## Calibration 3: RoBMA-PSMA
+
+For technical details, please refer to Equations 11 & 12.
+
+```{r}
+#-------------------------------------#
+#subset of SMD and zr
+#-------------------------------------#
+
+dfs <- dat_SMD.zr
+dfs <- lapply(dfs, function(df) {
+  if (all(df$grouped_es == "SMD")) {
+    temp_df <- data.frame(
+      z  = RoBMA::d2z(df$eff.size),
+      se = RoBMA::se_d2se_z(sqrt(df$var.eff.size), df$eff.size),
+      id = as.numeric(as.factor(df$study))
+    )
+  } else if (all(df$grouped_es == "Zr")) {
+    temp_df <- data.frame(
+      z  = df$eff.size,
+      se = sqrt(df$var.eff.size),
+      id = as.numeric(as.factor(df$study))
+    )
+  }
+
+  temp_df <- na.omit(temp_df)
+  temp_df$weight <- sapply(temp_df$id, function(x) 1/sum(temp_df$id == x))
+  return(temp_df)
+})
+saveRDS(dfs, "Dat/dat_ecoevo_transformed.rds")
+
+extract_RoBMA <- function(fit){
+
+  if(inherits(fit, "error") | is.null(fit)){
+    return(data.frame(
+      estimate              = NA,
+      estimate.lCI          = NA,
+      estimate.uCI          = NA,
+      estimate.BF           = NA,
+      heterogeneity.BF      = NA,
+      bias.BF               = NA,
+      PET_vs_bias.BF        = NA,
+      PEESE_vs_bias.BF      = NA,
+      weights_vs_bias.BF    = NA,
+      PET                   = NA,
+      PET.lCI               = NA,
+      PET.uCI               = NA,
+      PEESE                 = NA,
+      PEESE.lCI             = NA,
+      PEESE.uCI             = NA,
+      weight_0.025_0.05     = NA,
+      weight_0.025_0.05.lCI = NA,
+      weight_0.025_0.05.uCI = NA,
+      weight_0.05_0.5       = NA,
+      weight_0.05_0.5.lCI   = NA,
+      weight_0.05_0.5.uCI   = NA,
+      weight_0.5_0.95       = NA,
+      weight_0.5_0.95.lCI   = NA,
+      weight_0.5_0.95.uCI   = NA,
+      weight_0.95_0.975     = NA,
+      weight_0.95_0.975.lCI = NA,
+      weight_0.95_0.975.uCI = NA,
+      weight_0.975_1        = NA,
+      weight_0.975_1.lCI    = NA,
+      weight_0.975_1.uCI    = NA
+    ))
+  }
+
+  RoBMA.summary <- summary(fit, output_scale = "fishers_z")
+  RoBMA.models  <- summary(fit, "models")
+  RoBMA.summary_conditional <- summary(fit, conditional = TRUE, output_scale = "fishers_z")
+
+  prior_prob <- RoBMA.models$summary$prior_prob
+  post_prob  <- RoBMA.models$summary$post_prob
+
+  is_PETPEESE <- c(8:9, 17:18, 26:27, 35:36)
+  is_weights  <- c(2:7, 11:16, 20:25, 29:34)
+  is_no_bias  <- c(1,   10,    19,    28)
+
+  # deal with some of the under/overflow in BF calculations
+  marg_lik      <- RoBMA.models$summary$marglik
+  marg_lik      <- marg_lik - max(marg_lik)
+  prior_prob    <- RoBMA.models$summary$prior_prob
+  effect        <- c(rep(F, 18), rep(T, 18))
+  heterogeneity <- c(rep(F, 9), rep(T, 9), rep(F, 9), rep(T, 9))
+  bias          <- c(rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8))
+
+  BF_10  <- sum(exp(marg_lik[effect]) * prior_prob[effect]) / sum(exp(marg_lik[!effect]) * prior_prob[!effect])
+  BF_10f <- sum(exp(marg_lik[effect & !heterogeneity]) * 2 * prior_prob[effect & !heterogeneity]) / sum(exp(marg_lik[!effect & !heterogeneity]) * 2 * prior_prob[!effect & !heterogeneity])
+  BF_10r <- sum(exp(marg_lik[effect &  heterogeneity]) * 2 * prior_prob[effect &  heterogeneity]) / sum(exp(marg_lik[!effect &  heterogeneity]) * 2 * prior_prob[!effect &  heterogeneity])
+  BF_rf  <- sum(exp(marg_lik[heterogeneity]) * prior_prob[heterogeneity]) / sum(exp(marg_lik[!heterogeneity]) * prior_prob[!heterogeneity])
+  BF_pb  <- sum(exp(marg_lik[bias]) * prior_prob[bias]) / sum(exp(marg_lik[!bias]) * prior_prob[!bias])
+
+  return(data.frame(
+    estimate               = RoBMA.summary$estimates["mu", "Mean"],
+    estimate.lCI           = RoBMA.summary$estimates["mu", "0.025"],
+    estimate.uCI           = RoBMA.summary$estimates["mu", "0.975"],
+    estimate.con           = RoBMA.summary_conditional$estimates["mu", "Mean"],
+    estimate.con.lCI       = RoBMA.summary_conditional$estimates["mu", "0.025"],
+    estimate.con.uCI       = RoBMA.summary_conditional$estimates["mu", "0.975"],
+    heterogeneity          = RoBMA.summary$estimates["tau", "Mean"],
+    heterogeneity.lCI      = RoBMA.summary$estimates["tau", "0.025"],
+    heterogeneity.uCI      = RoBMA.summary$estimates["tau", "0.975"],
+    heterogeneity.con      = RoBMA.summary_conditional$estimates["tau", "Mean"],
+    heterogeneity.con.lCI  = RoBMA.summary_conditional$estimates["tau", "0.025"],
+    heterogeneity.con.uCI  = RoBMA.summary_conditional$estimates["tau", "0.975"],
+    estimate.BF            = RoBMA.summary$components["Effect", "inclusion_BF"],
+    heterogeneity.BF       = RoBMA.summary$components["Heterogeneity", "inclusion_BF"],
+    bias.BF                = RoBMA.summary$components["Bias", "inclusion_BF"]
+  ))
+}
+
+cl <- parallel::makeCluster(23)
+parallel::clusterExport(cl, c("dfs", "extract_RoBMA"))
+parallel::clusterEvalQ(cl, {
+  library(RoBMA)
+})
+parallel::parLapplyLB(cl, 1:length(dfs), function(i) {
+
+  if(length(dfs[[i]]$z) == 0) {
+    cat("Skipping ", i, " due to insufficient data\n")
+    next
+  }
+
+  fit <- RoBMA(
+    z          = dfs[[i]]$z,
+    se         = dfs[[i]]$se,
+    weight     = dfs[[i]]$weight,
+    parallel   = FALSE,
+    model_type = "PSMA",
+    autofit    = TRUE,
+    chains     = 4,
+    seed       = 1
+  )
+
+  out <- extract_RoBMA(fit)
+  saveRDS(out, file = paste0("Dat/out2/", i, ".RDS"))
+
+})
+
+
+# finish the rest in parallel
+df_done <- gsub(".RDS", "", list.files("Dat/out2/"))
+df_indx <- seq_along(dfs)
+df_indx <- df_indx[!df_indx %in% df_done]
+library(RoBMA)
+
+for(i in df_indx) {
+  cat("Processing ", i, "\n")
+
+  if(length(dfs[[i]]$z) == 0) {
+    cat("Skipping ", i, " due to insufficient data\n")
+    next
+  }
+
+  fit <- RoBMA(
+    z          = dfs[[i]]$z,
+    se         = dfs[[i]]$se,
+    weight     = dfs[[i]]$weight,
+    parallel   = TRUE,
+    model_type = "PSMA",
+    autofit    = TRUE,
+    chains     = 4,
+    seed       = 1
+  )
+
+  out <- extract_RoBMA(fit)
+  saveRDS(out, file = paste0("Dat/out2/", i, ".RDS"))
+}
+
+
+# combine the results
+df_done <- cbind(
+  file = gsub(".RDS", "", list.files("Dat/out2/")),
+  read.csv("Dat/out_adj.csv")
+)
+df_done$estimate.con.se <- (df_done$estimate.con.uCI - df_done$estimate.con.lCI) / (2 * qnorm(0.975))
+write.csv(df_done, "Dat/robma_SMD.zr.csv", row.names = FALSE)
+
+
+#-------------------------------------#
+#subset of lnRR
+#-------------------------------------#
+
+dfs <- dat_lnRR
+dfs <- lapply(dfs, function(df) {
+  if (all(df$grouped_es == "SMD")) {
+    temp_df <- data.frame(
+      z  = RoBMA::d2z(df$eff.size),
+      se = RoBMA::se_d2se_z(sqrt(df$var.eff.size), df$eff.size),
+      id = as.numeric(as.factor(df$study))
+    )
+  } else if (all(df$grouped_es == "Zr")) {
+    temp_df <- data.frame(
+      z  = df$eff.size,
+      se = sqrt(df$var.eff.size),
+      id = as.numeric(as.factor(df$study))
+    )
+  } else if (all(df$grouped_es == "lnRR")) {
+    temp_df <- data.frame(
+      logRR  = df$eff.size,
+      se     = sqrt(df$var.eff.size),
+      id     = as.numeric(as.factor(df$study))
+    )
+  }
+
+  temp_df <- na.omit(temp_df)
+  temp_df$weight <- sapply(temp_df$id, function(x) 1/sum(temp_df$id == x))
+  return(temp_df)
+})
+
+
+
+
+extract_RoBMA <- function(fit){
+
+  if(inherits(fit, "error") | is.null(fit)){
+    return(data.frame(
+      estimate              = NA,
+      estimate.lCI          = NA,
+      estimate.uCI          = NA,
+      estimate.BF           = NA,
+      heterogeneity.BF      = NA,
+      bias.BF               = NA,
+      PET_vs_bias.BF        = NA,
+      PEESE_vs_bias.BF      = NA,
+      weights_vs_bias.BF    = NA,
+      PET                   = NA,
+      PET.lCI               = NA,
+      PET.uCI               = NA,
+      PEESE                 = NA,
+      PEESE.lCI             = NA,
+      PEESE.uCI             = NA,
+      weight_0.025_0.05     = NA,
+      weight_0.025_0.05.lCI = NA,
+      weight_0.025_0.05.uCI = NA,
+      weight_0.05_0.5       = NA,
+      weight_0.05_0.5.lCI   = NA,
+      weight_0.05_0.5.uCI   = NA,
+      weight_0.5_0.95       = NA,
+      weight_0.5_0.95.lCI   = NA,
+      weight_0.5_0.95.uCI   = NA,
+      weight_0.95_0.975     = NA,
+      weight_0.95_0.975.lCI = NA,
+      weight_0.95_0.975.uCI = NA,
+      weight_0.975_1        = NA,
+      weight_0.975_1.lCI    = NA,
+      weight_0.975_1.uCI    = NA
+    ))
+  }
+
+  RoBMA.summary <- summary(fit)
+  RoBMA.models  <- summary(fit, "models")
+  RoBMA.summary_conditional <- summary(fit, conditional = TRUE)
+
+  prior_prob <- RoBMA.models$summary$prior_prob
+  post_prob  <- RoBMA.models$summary$post_prob
+
+  is_PETPEESE <- c(8:9, 17:18, 26:27, 35:36)
+  is_weights  <- c(2:7, 11:16, 20:25, 29:34)
+  is_no_bias  <- c(1,   10,    19,    28)
+
+  # deal with some of the under/overflow in BF calculations
+  marg_lik      <- RoBMA.models$summary$marglik
+  marg_lik      <- marg_lik - max(marg_lik)
+  prior_prob    <- RoBMA.models$summary$prior_prob
+  effect        <- c(rep(F, 18), rep(T, 18))
+  heterogeneity <- c(rep(F, 9), rep(T, 9), rep(F, 9), rep(T, 9))
+  bias          <- c(rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8), rep(F, 1), rep(T, 8))
+
+  BF_10  <- sum(exp(marg_lik[effect]) * prior_prob[effect]) / sum(exp(marg_lik[!effect]) * prior_prob[!effect])
+  BF_10f <- sum(exp(marg_lik[effect & !heterogeneity]) * 2 * prior_prob[effect & !heterogeneity]) / sum(exp(marg_lik[!effect & !heterogeneity]) * 2 * prior_prob[!effect & !heterogeneity])
+  BF_10r <- sum(exp(marg_lik[effect &  heterogeneity]) * 2 * prior_prob[effect &  heterogeneity]) / sum(exp(marg_lik[!effect &  heterogeneity]) * 2 * prior_prob[!effect &  heterogeneity])
+  BF_rf  <- sum(exp(marg_lik[heterogeneity]) * prior_prob[heterogeneity]) / sum(exp(marg_lik[!heterogeneity]) * prior_prob[!heterogeneity])
+  BF_pb  <- sum(exp(marg_lik[bias]) * prior_prob[bias]) / sum(exp(marg_lik[!bias]) * prior_prob[!bias])
+
+  return(data.frame(
+    estimate               = RoBMA.summary$estimates["mu", "Mean"],
+    estimate.lCI           = RoBMA.summary$estimates["mu", "0.025"],
+    estimate.uCI           = RoBMA.summary$estimates["mu", "0.975"],
+    estimate.con           = RoBMA.summary_conditional$estimates["mu", "Mean"],
+    estimate.con.lCI       = RoBMA.summary_conditional$estimates["mu", "0.025"],
+    estimate.con.uCI       = RoBMA.summary_conditional$estimates["mu", "0.975"],
+    heterogeneity          = RoBMA.summary$estimates["tau", "Mean"],
+    heterogeneity.lCI      = RoBMA.summary$estimates["tau", "0.025"],
+    heterogeneity.uCI      = RoBMA.summary$estimates["tau", "0.975"],
+    heterogeneity.con      = RoBMA.summary_conditional$estimates["tau", "Mean"],
+    heterogeneity.con.lCI  = RoBMA.summary_conditional$estimates["tau", "0.025"],
+    heterogeneity.con.uCI  = RoBMA.summary_conditional$estimates["tau", "0.975"],
+    estimate.BF            = RoBMA.summary$components["Effect", "inclusion_BF"],
+    heterogeneity.BF       = RoBMA.summary$components["Heterogeneity", "inclusion_BF"],
+    bias.BF                = RoBMA.summary$components["Bias", "inclusion_BF"]
+  ))
+}
+
+cl <- parallel::makeCluster(30)
+parallel::clusterExport(cl, c("dfs", "extract_RoBMA"))
+parallel::clusterEvalQ(cl, {
+  library(RoBMA)
+})
+
+# medical priors for SMD:    Student-t(0, 0.43, 5)
+# medical priors for log RR: Student-t(0, 0.32, 3)
+# use the following scaling: 0.32 / 0.43 = 0.74
+
+parallel::parLapplyLB(cl, 1:length(dfs), function(i) {
+
+  if(length(dfs[[i]]$logRR) == 0) {
+    cat("Skipping ", i, " due to insufficient data\n")
+    next
+  }
+
+  fit <- RoBMA(
+    y          = dfs[[i]]$logRR,
+    se         = dfs[[i]]$se,
+    weight     = dfs[[i]]$weight,
+    priors_effect        = prior(distribution = "normal", parameters = list(mean = 0, sd = 1 * (0.32 / 0.43))),
+    priors_heterogeneity = prior(distribution = "invgamma", parameters = list(shape = 1, scale = 0.15 * (0.32 / 0.43))),
+    priors_bias          = list(prior_weightfunction(distribution = "two.sided", parameters = list(alpha = c(1, 1),       steps = c(0.05)),             prior_weights = 1/12),
+                                prior_weightfunction(distribution = "two.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.05, 0.1)),        prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1),       steps = c(0.05)),             prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.025, 0.05)),      prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.05, 0.5)),        prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1, 1), steps = c(0.025, 0.05, 0.5)), prior_weights = 1/12),
+                                prior_PET(distribution = "Cauchy",   parameters = list(0, 1), truncation = list(0, Inf), prior_weights = 1/4),
+                                prior_PEESE(distribution = "Cauchy", parameters = list(0, 5 / (0.32 / 0.43)^2), truncation = list(0, Inf), prior_weights = 1/4)),
+    parallel   = FALSE,
+    autofit    = TRUE,
+    chains     = 4,
+    seed       = 1
+  )
+
+  out <- extract_RoBMA(fit)
+  saveRDS(out, file = paste0("Dat/out3b/", i, ".RDS"))
+
+})
+
+
+# finish the rest in parallel
+df_done <- gsub(".RDS", "", list.files("New computation/out3b/"))
+df_indx <- seq_along(dfs)
+df_indx <- df_indx[!df_indx %in% df_done]
+library(RoBMA)
+
+for(i in df_indx) {
+  cat("Processing ", i, "\n")
+
+  if(length(dfs[[i]]$logRR) == 0) {
+    cat("Skipping ", i, " due to insufficient data\n")
+    next
+  }
+
+  fit <- RoBMA(
+    y          = dfs[[i]]$logRR,
+    se         = dfs[[i]]$se,
+    weight     = dfs[[i]]$weight,
+    priors_effect        = prior(distribution = "normal", parameters = list(mean = 0, sd = 1 * (0.32 / 0.43))),
+    priors_heterogeneity = prior(distribution = "invgamma", parameters = list(shape = 1, scale = 0.15 * (0.32 / 0.43))),
+    priors_bias          = list(prior_weightfunction(distribution = "two.sided", parameters = list(alpha = c(1, 1),       steps = c(0.05)),             prior_weights = 1/12),
+                                prior_weightfunction(distribution = "two.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.05, 0.1)),        prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1),       steps = c(0.05)),             prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.025, 0.05)),      prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1),    steps = c(0.05, 0.5)),        prior_weights = 1/12),
+                                prior_weightfunction(distribution = "one.sided", parameters = list(alpha = c(1, 1, 1, 1), steps = c(0.025, 0.05, 0.5)), prior_weights = 1/12),
+                                prior_PET(distribution = "Cauchy",   parameters = list(0, 1), truncation = list(0, Inf), prior_weights = 1/4),
+                                prior_PEESE(distribution = "Cauchy", parameters = list(0, 5 / (0.32 / 0.43)^2), truncation = list(0, Inf), prior_weights = 1/4)),
+    parallel   = TRUE,
+    autofit    = TRUE,
+    chains     = 4,
+    seed       = 1
+  )
+
+  out <- extract_RoBMA(fit)
+  saveRDS(out, file = paste0("Dat/out3b/", i, ".RDS"))
+}
+
+
+# load and merge the results
+df_done <- cbind(
+  file = gsub(".RDS", "", list.files("Dat/out3b/")),
+  do.call(rbind, lapply(list.files("Dat/out3b/", full.names = TRUE), readRDS))
+)
+df_done$estimate.con.se <- (df_done$estimate.con.uCI - df_done$estimate.con.lCI) / (2 * qnorm(0.975))
+write.csv(df_done, "Dat/robma_lnRR.csv", row.names = FALSE)
+```
+
+
+# Model estimate
+
+After fitting all necessary models, we will need to extract model estimates. Given that fitting all models takes a long while, we just upload the fitted model objects. For `R` code fitting all models, please refer to `Modelling`.
+
+## Load model
+
+Load model objects (in the format of `.RData`). 
+
+```{r}
+res_SMD.zr <- readRDS(here("Dat", "res_SMD.zr.RData"))
+res_lnRR <- readRDS(here("Dat", "res_lnRR.RData"))
+step1_SMD.zr <- readRDS(here("Dat", "step1_SMD.zr.RData"))
+step2_SMD.zr <- readRDS(here("Dat", "step2_SMD.zr.RData"))
+step1_lnRR <- readRDS(here("Dat", "step1_lnRR.RData"))
+step2_lnRR <- readRDS(here("Dat", "step2_lnRR.RData"))
+adjustPET_SMD.zr_RVE <- readRDS(here("Dat", "adjustPET_SMD.zr_RVE.RData"))
+adjustPEESE_SMD.zr_RVE <- readRDS(here("Dat", "adjustPEESE_SMD.zr_RVE.RData"))
+adjustPET_lnRR_RVE <- readRDS(here("Dat", "adjustPET_lnRR_RVE.RData"))
+adjustPEESE_lnRR_RVE <- readRDS(here("Dat", "adjustPEESE_lnRR_RVE.RData"))
+```
+
+## SMD
+
+We extract model estimates for meta-analysis datasets using `SMD` as the effect size measure.
+
+```{r}
+# naïve MLMA-SVCV model
+est.naive_SMD.zr <- do.call(rbind, lapply(res_SMD.zr, function(model) {
+  if (is.null(model)) {
+    # NULL models
+    return(data.frame(est = NA, se = NA, p = NA))
+  }
+  tryCatch({
+    # extract estimates if the model exists
+    data.frame(
+      est = model$b[1],
+      se  = model$se[1],
+      p   = model$pval[1]
+    )
+  }, error = function(e) {
+    # assign NA if extraction fails
+    return(data.frame(est = NA, se = NA, p = NA))
+  })
+}))
+
+#saveRDS(est.naive_SMD.zr, here("Dat", "est.naive_SMD.zr.RData"))
+est.naive_SMD.zr <- readRDS(here("Dat", "est.naive_SMD.zr.RData"))
+
+
+# calibration 1: two-step RPVE
+est.twostep_SMD.zr <- do.call(rbind, lapply(step2_SMD.zr, function(model) {
+  if (is.null(model)) {
+    # NULL models
+    return(data.frame(est = NA, se = NA, p = NA))
+  }
+  tryCatch({
+    # extract estimates if the model exists
+    data.frame(
+      est = model$b[1],
+      se  = model$se[1],
+      p   = model$pval[1]
+    )
+  }, error = function(e) {
+    # assign NA if extraction fails
+    return(data.frame(est = NA, se = NA, p = NA))
+  })
+}))
+
+#saveRDS(est.twostep_SMD.zr, here("Dat", "est.twostep_SMD.zr.RData"))
+est.twostep_SMD.zr <- readRDS(here("Dat", "est.twostep_SMD.zr.RData"))
+
+# calibration 2: PETPEESE-ISVCVW
+est.petpeese_SMD.zr <- do.call(rbind, lapply(seq_along(adjustPET_SMD.zr_RVE), function(i) {
+  # NULL models for PET and PEESE
+  PET_model <- adjustPET_SMD.zr_RVE[[i]]
+  PEESE_model <- adjustPEESE_SMD.zr_RVE[[i]]
+  
+  if (is.null(PET_model) || is.null(PEESE_model)) {
+    # assign NA if any model is null
+    return(data.frame(est = NA, se = NA, p = NA, source = NA))
+  }
+  
+  tryCatch({
+    # evaluate PET p-value
+    PET_pval <- PET_model$pval[1]
+    
+    if (PET_pval > 0.1) {
+      # extract from PET if test is not rejected
+      return(data.frame(
+        est = PET_model$b[1],
+        se  = PET_model$se[1],
+        p   = PET_pval,
+        source = "PET"
+      ))
+    } else if (PET_pval < 0.1) {
+      # extract from PEESE if PET is rejected
+      return(data.frame(
+        est = PEESE_model$b[1],
+        se  = PEESE_model$se[1],
+        p   = PEESE_model$pval[1],
+        source = "PEESE"
+      ))
+    } else {
+      # assign NA if conditions are ambiguous
+      return(data.frame(est = NA, se = NA, p = NA, source = NA))
+    }
+  }, error = function(e) {
+    # errors during extraction
+    return(data.frame(est = NA, se = NA, p = NA, source = NA))
+  })
+}))
+
+#saveRDS(est.petpeese_SMD.zr, here("Dat", "est.petpeese_SMD.zr.RData"))
+est.petpeese_SMD.zr <- readRDS(here("Dat", "est.petpeese_SMD.zr.RData"))
+
+# calibration 3: RoBMA-PSMA
+est.robma_SMD.zr <- read.csv(here("Dat", "robma_SMD.zr.csv"))
+# reorder
+est.robma_SMD.zr <- est.robma_SMD.zr %>% arrange(file) 
+
+# merge
+est_SMD.zr <- data.frame(naive = est.naive_SMD.zr$est,
+                         twostep = est.twostep_SMD.zr$est,
+                         petpeese = est.petpeese_SMD.zr$est,
+                         robma = est.robma_SMD.zr$estimate.con)
+# add sample size info
+est_SMD.zr <- est_SMD.zr %>% mutate(k = sapply(dat_SMD.zr, function(x) nrow(x)),
+                                    N = sapply(dat_SMD.zr, function(x) length(unique(x$study))))
+
+# add publication bias info
+est_SMD.zr <- est_SMD.zr %>% mutate(BF_PSB = est.robma_SMD.zr$bias.BF) %>%
+  mutate(PSB = case_when(BF_PSB >= 1 ~ "Yes",
+                         BF_PSB < 1 ~ "No"))
+
+
+# split into SMD
+est_SMD.zr <- est_SMD.zr %>% mutate(es.measure = sapply(dat_SMD.zr, function(x) x$grouped_es[1]))
+est_SMD <- filter(est_SMD.zr, es.measure == "SMD")
+
+#saveRDS(est_SMD, here("Dat", "est_SMD.RData"))
+est_SMD <- readRDS(here("Dat", "est_SMD.RData"))
+```
+
+
+## r
+
+We extract model estimates for meta-analysis datasets using `r` as the effect size measure.
+
+```{r}
+# split est_SMD.zr into the subset of zr
+est_zr <- filter(est_SMD.zr, es.measure == "Zr")
+# back-transform estimates from robust Bayesian model average into zr scale (note that the RoBMA package we used to fit robust bayesian model average internally transform zr into Cohen's d to allow a proper prior specification)
+est_zr$robma <- d2z(est_zr$robma) # only run once!!!
+#saveRDS(est_zr, here("Dat", "est_zr.RData"))
+est_zr <- readRDS(here("Dat", "est_zr.RData"))
+
+# correlation coefficient
+# conversion
+est_r <- est_zr %>% mutate(naive = z2r(naive),
+                          twostep = z2r(twostep),
+                          petpeese = z2r(petpeese),
+                          robma = z2r(robma))
+#saveRDS(est_r, here("Dat", "est_r.RData"))
+est_r <- readRDS(here("Dat", "est_r.RData"))
+```
+
+
+## lnRR
+
+We extract model estimates for meta-analysis datasets using `lnRR` as the effect size measure.
+
+```{r}
+# naïve MLMA-SVCV model
+est.naive_lnRR <- do.call(rbind, lapply(res_lnRR, function(model) {
+  if (is.null(model)) {
+    # NULL models
+    return(data.frame(est = NA, se = NA, p = NA))
+  }
+  tryCatch({
+    # extract estimates if the model exists
+    data.frame(
+      est = model$b[1],
+      se  = model$se[1],
+      p   = model$pval[1]
+    )
+  }, error = function(e) {
+    # assign NA if extraction fails
+    return(data.frame(est = NA, se = NA, p = NA))
+  })
+}))
+
+#saveRDS(est.naive_lnRR, here("Dat", "est.naive_lnRR.RData"))
+est.naive_lnRR <- readRDS(here("Dat", "est.naive_lnRR.RData"))
+
+# calibration 1: two-step RPVE
+est.twostep_lnRR <- do.call(rbind, lapply(step2_lnRR, function(model) {
+  if (is.null(model)) {
+    # NULL models
+    return(data.frame(est = NA, se = NA, p = NA))
+  }
+  tryCatch({
+    # extract estimates if the model exists
+    data.frame(
+      est = model$b[1],
+      se  = model$se[1],
+      p   = model$pval[1]
+    )
+  }, error = function(e) {
+    # assign NA if extraction fails
+    return(data.frame(est = NA, se = NA, p = NA))
+  })
+}))
+
+#saveRDS(est.twostep_lnRR, here("Dat", "est.twostep_lnRR.RData"))
+est.twostep_lnRR <- readRDS(here("Dat", "est.twostep_lnRR.RData"))
+
+# calibration 2: PETPEESE-ISVCVW
+est.petpeese_lnRR <- do.call(rbind, lapply(seq_along(adjustPET_lnRR_RVE), function(i) {
+  # NULL models for PET and PEESE
+  PET_model <- adjustPET_lnRR_RVE[[i]]
+  PEESE_model <- adjustPEESE_lnRR_RVE[[i]]
+  
+  if (is.null(PET_model) || is.null(PEESE_model)) {
+    # assign NA if any model is null
+    return(data.frame(est = NA, se = NA, p = NA, source = NA))
+  }
+  
+  tryCatch({
+    # evaluate PET p-value
+    PET_pval <- PET_model$pval[1]
+    
+    if (PET_pval > 0.1) {
+      # extract from PET if test is not rejected
+      return(data.frame(
+        est = PET_model$b[1],
+        se  = PET_model$se[1],
+        p   = PET_pval,
+        source = "PET"
+      ))
+    } else if (PET_pval < 0.1) {
+      # extract from PEESE if PET is rejected
+      return(data.frame(
+        est = PEESE_model$b[1],
+        se  = PEESE_model$se[1],
+        p   = PEESE_model$pval[1],
+        source = "PEESE"
+      ))
+    } else {
+      # assign NA if conditions are ambiguous
+      return(data.frame(est = NA, se = NA, p = NA, source = NA))
+    }
+  }, error = function(e) {
+    # errors during extraction
+    return(data.frame(est = NA, se = NA, p = NA, source = NA))
+  })
+}))
+
+#saveRDS(est.petpeese_lnRR, here("Dat", "est.petpeese_lnRR.RData"))
+est.petpeese_lnRR <- readRDS(here("Dat", "est.petpeese_lnRR.RData"))
+
+# calibration 3: RoBMA-PSMA
+est.robma_lnRR <- read.csv(here("Dat", "robma_lnRR.csv"))
+# reorder
+est.robma_lnRR <- est.robma_lnRR %>% arrange(file) 
+
+# merge
+est_lnRR <- data.frame(naive = est.naive_lnRR$est,
+                         twostep = est.twostep_lnRR$est,
+                         petpeese = est.petpeese_lnRR$est,
+                         robma = est.robma_lnRR$estimate.con)
+# add sample size info
+est_lnRR <- est_lnRR %>% mutate(k = sapply(dat_lnRR, function(x) nrow(x)),
+                                    N = sapply(dat_lnRR, function(x) length(unique(x$study))))
+
+# add publication bias info
+est_lnRR <- est_lnRR %>% mutate(BF_PSB = est.robma_lnRR$bias.BF) %>%
+  mutate(PSB = case_when(BF_PSB >= 1 ~ "Yes",
+                         BF_PSB < 1 ~ "No"))
+
+# add measure info
+est_lnRR <- est_lnRR %>% mutate(es.measure = sapply(dat_lnRR, function(x) x$grouped_es[1]))
+
+#saveRDS(est_lnRR, here("Dat", "est_lnRR.RData"))
+est_lnRR <- readRDS(here("Dat", "est_lnRR.RData"))
+```
+
+
+# Performance measure
+
+
+
+## Consistency
+
+```{r}
+# add a variable to indicate the presence of effect
+## SMD and r
+est.naive_SMD.zr <- est.naive_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.twostep_SMD.zr <- est.twostep_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.petpeese_SMD.zr <- est.petpeese_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.1 ~ "TRUE",
+                            p >= 0.1 ~ "FALSE"))
+
+est.robma_SMD.zr <- est.robma_SMD.zr %>%
+  mutate(effect = case_when(estimate.BF >= 3 ~ "TRUE",
+                         estimate.BF < 3 ~ "FALSE"))
+
+## lnRR
+est.naive_lnRR <- est.naive_lnRR %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.twostep_lnRR <- est.twostep_lnRR %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.petpeese_lnRR <- est.petpeese_lnRR %>% 
+  mutate(effect = case_when(p < 0.1 ~ "TRUE",
+                            p >= 0.1 ~ "FALSE"))
+
+est.robma_lnRR <- est.robma_lnRR %>%
+  mutate(effect = case_when(estimate.BF >= 3 ~ "TRUE",
+                            estimate.BF < 3 ~ "FALSE"))
+
+# data frame
+plot_data <- data.frame(naive = c(est.naive_SMD.zr$effect, est.naive_lnRR$effect),
+                         twostep = c(est.twostep_SMD.zr$effect, est.twostep_lnRR$effect),
+                         petpeese = c(est.petpeese_SMD.zr$effect, est.petpeese_lnRR$effect),
+                         robma = c(est.robma_SMD.zr$effect, est.robma_lnRR$effect))
+
+# effect size measure info
+es.measure1 <- sapply(dat_SMD.zr, function(x) x$grouped_es[1]) %>% as.character()
+es.measure2 <- sapply(dat_lnRR, function(x) x$grouped_es[1]) %>% as.character()
+plot_data$es.measure <- c(es.measure1,es.measure2)
+
+
+# plot
+names(plot_data) <- c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA", "Measure")
+
+approach <- data.frame(approach = colnames(plot_data)[1:4])
+#approach$approach <- as.factor(approach$approach)
+#approach$approach <- factor(approach$approach, levels = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"))
+
+p <- ComplexUpset::upset(plot_data, approach$approach, name = "Bias calibration approach",
+                    width_ratio = 0.3,
+                    height_ratio = 0.7, 
+                    stripes=c('#FFE8CE', '#DACEC2'), 
+                    #themes=upset_default_themes(text=element_text(color='black', size = 12)),
+                    themes=upset_modify_themes(
+        list(
+            'intersections_matrix'=theme(text=element_text(size = 14, color = "black"))
+        )
+    ),
+                    set_sizes = upset_set_size(
+                      geom = geom_bar(fill = '#E3738B', width = 0.5), 
+                      position = "left") + geom_text(stat='count', aes(label=..count..), position = position_stack(vjust = 0.5)) + ylab('Count'),
+                    base_annotations=list(
+        'Intersection size' = (intersection_size(counts = TRUE, mapping=aes(fill='bars_color'))) + 
+          scale_fill_manual(values=c('bars_color'='#713948'), guide='none') + ylab('Intersection size') + theme(axis.title.y = element_text(size = 12), axis.title.x = element_text(size = 14)) + xlab("Intersection between different approaches")
+    ),
+  matrix = intersection_matrix(
+    outline_color = list(active = "#E3738B", inactive = "grey70") 
+) + scale_color_manual(
+            values=c('TRUE'='#E3738B', 'FALSE'='grey70'),
+            labels=c('TRUE'='Yes', 'FALSE'='No'),
+            breaks=c('TRUE', 'FALSE'),
+            name = 'Presence \nof effect?'
+        )
+        + scale_y_discrete(
+            position='right') 
+)
+
+
+png(filename = "fig intersection.png", width = 8, height = 5, units = "in", type = "windows", res = 400)
+p
+dev.off()
+
+```
+
+
+
+## Density
+
+```{r}
+# SMD
+# prepare data
+plot_data <- select(est_SMD, naive, twostep, petpeese, robma, BF_PSB)
+plot_data <- plot_data %>%
+  pivot_longer(cols = c(naive, twostep, petpeese, robma), 
+               names_to = "Approach", 
+               values_to = "Estimate") %>%
+  mutate(Approach = dplyr::recode(Approach, 
+                       naive = "Naive: MLMA-SVCV model", 
+                       twostep = "Calibration 1: Two-step RPVE",
+                       petpeese = "Calibration 2: PETPEESE-IVCVW",
+                       robma = "Calibration 3: RoBMA-PSMA"))
+
+# plot
+plot_data$Approach <- as.factor(plot_data$Approach)
+plot_data$Approach <- factor(plot_data$Approach, levels = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"))
+
+# absolute value
+plot_data$Estimate <- abs(plot_data$Estimate)
+p1 <- ggdensity(filter(plot_data, BF_PSB > 1), x = "Estimate",
+   add = "none", rug = TRUE, alpha = 0.4,
+   color = "Approach", fill = "Approach") + 
+  labs(title = "Standardized mean difference (SMD)", x = "Effect size estimate", y = "Density", fill = "", color = "") +
+  scale_fill_jama() +
+  scale_color_jama() +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 15),
+        plot.title = element_text(hjust = 0.5),
+        legend.text=element_text(size = 15),
+        legend.direction = "vertical",
+        legend.position = c(1,1), 
+        legend.justification = c(1, 1)
+        ) + xlim(0,2)
+
+# z
+# prepare data
+plot_data <- select(est_r, naive, twostep, petpeese, robma, BF_PSB)
+plot_data <- plot_data %>%
+  pivot_longer(cols = c(naive, twostep, petpeese, robma), 
+               names_to = "Approach", 
+               values_to = "Estimate") %>%
+  mutate(Approach = dplyr::recode(Approach, 
+                                  naive = "Naive: MLMA-SVCV model", 
+                                  twostep = "Calibration 1: Two-step RPVE",
+                                  petpeese = "Calibration 2: PETPEESE-IVCVW",
+                                  robma = "Calibration 3: RoBMA-PSMA"))
+
+# plot
+plot_data$Approach <- as.factor(plot_data$Approach)
+plot_data$Approach <- factor(plot_data$Approach, levels = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"))
+
+# absolute value
+plot_data$Estimate <- abs(plot_data$Estimate)
+
+p2 <- ggdensity(filter(plot_data, BF_PSB > 1), x = "Estimate",
+                add = "none", rug = TRUE, alpha = 0.4,
+                color = "Approach", fill = "Approach") + 
+  labs(title = "Correlation coefficient (r)", x = "Effect size estimate", y = "Density", fill = "", color = "") +
+  scale_fill_jama() +
+  scale_color_jama() +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 15),
+        plot.title = element_text(hjust = 0.5),
+        legend.text=element_text(size = 15),
+        legend.direction = "vertical",
+        legend.position = c(1,1), 
+        legend.justification = c(1, 1)
+  ) + xlim(0,1)
+
+# lnRR
+# prepare data
+plot_data <- select(est_lnRR, naive, twostep, petpeese, robma, BF_PSB)
+plot_data <- plot_data %>%
+  pivot_longer(cols = c(naive, twostep, petpeese, robma), 
+               names_to = "Approach", 
+               values_to = "Estimate") %>%
+  mutate(Approach = dplyr::recode(Approach, 
+                                  naive = "Naive: MLMA-SVCV model", 
+                                  twostep = "Calibration 1: Two-step RPVE",
+                                  petpeese = "Calibration 2: PETPEESE-IVCVW",
+                                  robma = "Calibration 3: RoBMA-PSMA"))
+
+# plot
+plot_data$Approach <- as.factor(plot_data$Approach)
+plot_data$Approach <- factor(plot_data$Approach, levels = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"))
+
+# absolute value
+plot_data$Estimate <- abs(plot_data$Estimate)
+
+p3 <- ggdensity(filter(plot_data, BF_PSB > 1), x = "Estimate",
+                add = "none", rug = TRUE, alpha = 0.4,
+                color = "Approach", fill = "Approach") + 
+  labs(title = "Log response ratio (lnRR)", x = "Effect size estimate", y = "Density", fill = "", color = "") +
+  scale_fill_jama() +
+  scale_color_jama() +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 15),
+        plot.title = element_text(hjust = 0.5),
+        legend.text=element_text(size = 15),
+        legend.direction = "vertical",
+        legend.position = c(1,1), 
+        legend.justification = c(1, 1)
+  ) + xlim(0,2)
+
+
+png(filename = "fig density.png", width = 8, height = 10, units = "in", type = "windows", res = 400)
+  p3 + p1 + p2 +
+  plot_layout(ncol = 1, nrow = 3, tag_level = 'new', guides = "collect") +  plot_annotation(tag_levels = list(c('A', "B", 'C'))) & theme(plot.tag = element_text(size = 15, face = "bold"), legend.position = "bottom") 
+dev.off()
+
+```
+
+## Benchmark
+
+```{r}
+# dataframe
+df1 <- data.frame(Metric = rep("Log response ratio (lnRR)", 4),
+                 Approach = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"),
+                 Q1 = c(quantile(abs(est_lnRR$naive), probs = 0.25),
+                        quantile(abs(est_lnRR$twostep), probs = 0.25),
+                        quantile(abs(est_lnRR$petpeese), probs = 0.25),
+                        quantile(abs(est_lnRR$robma), probs = 0.25)),
+                 Q2 = c(quantile(abs(est_lnRR$naive), probs = 0.5),
+                        quantile(abs(est_lnRR$twostep), probs = 0.5),
+                        quantile(abs(est_lnRR$petpeese), probs = 0.5),
+                        quantile(abs(est_lnRR$robma), probs = 0.5)),
+                 Q3 = c(quantile(abs(est_lnRR$naive), probs = 0.75),
+                        quantile(abs(est_lnRR$twostep), probs = 0.75),
+                        quantile(abs(est_lnRR$petpeese), probs = 0.75),
+                        quantile(abs(est_lnRR$robma), probs = 0.75)))
+
+df2 <- data.frame(Metric = rep("Standardized mean difference (SMD)", 4),
+                  Approach = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"),
+                  Q1 = c(quantile(abs(est_SMD$naive), probs = 0.25),
+                         quantile(abs(est_SMD$twostep), probs = 0.25),
+                         quantile(abs(est_SMD$petpeese), probs = 0.25, na.rm = T),
+                         quantile(abs(est_SMD$robma), probs = 0.25)),
+                  Q2 = c(quantile(abs(est_SMD$naive), probs = 0.5),
+                         quantile(abs(est_SMD$twostep), probs = 0.5),
+                         quantile(abs(est_SMD$petpeese), probs = 0.5, na.rm = T),
+                         quantile(abs(est_SMD$robma), probs = 0.5)),
+                  Q3 = c(quantile(abs(est_SMD$naive), probs = 0.75),
+                         quantile(abs(est_SMD$twostep), probs = 0.75),
+                         quantile(abs(est_SMD$petpeese), probs = 0.75, na.rm = T),
+                         quantile(abs(est_SMD$robma), probs = 0.75)))
+
+
+df3 <- data.frame(Metric = rep("Correlation coefficient (r)", 4),
+                  Approach = c("Naive: MLMA-SVCV model", "Calibration 1: Two-step RPVE", "Calibration 2: PETPEESE-IVCVW", "Calibration 3: RoBMA-PSMA"),
+                  Q1 = c(quantile(abs(est_zr$naive), probs = 0.25),
+                         quantile(abs(est_zr$twostep), probs = 0.25),
+                         quantile(abs(est_zr$petpeese), probs = 0.25),
+                         quantile(abs(est_zr$robma), probs = 0.25)),
+                  Q2 = c(quantile(abs(est_zr$naive), probs = 0.5),
+                         quantile(abs(est_zr$twostep), probs = 0.5),
+                         quantile(abs(est_zr$petpeese), probs = 0.5),
+                         quantile(abs(est_zr$robma), probs = 0.5)),
+                  Q3 = c(quantile(abs(est_zr$naive), probs = 0.75),
+                         quantile(abs(est_zr$twostep), probs = 0.75),
+                         quantile(abs(est_zr$petpeese), probs = 0.75),
+                         quantile(abs(est_zr$robma), probs = 0.75)))
+
+
+df <- rbind(df1, df2, df3)
+df <- dfround(df, 3)
+df$Metric <- as.factor(df$Metric)
+df$Metric <- factor(df$Metric, levels = c("Log response ratio (lnRR)", "Standardized mean difference (SMD)", "Correlation coefficient (r)"))
+df$Approach <- as.factor(df$Approach)
+df$Approach <- factor(df$Approach, levels = c("Calibration 3: RoBMA-PSMA", "Calibration 2: PETPEESE-IVCVW", "Calibration 1: Two-step RPVE", "Naive: MLMA-SVCV model"))
+
+
+# plot
+p <- ggplot(df, aes(x = Approach, y = Q2, ymin = Q1, ymax = Q3, color = Approach, fill = Approach)) + 
+  geom_linerange(linewidth = 8) +
+  coord_flip() +
+  #geom_hline(yintercept = 0.2, lty = "longdash", color = "grey40") +
+  #geom_hline(yintercept = 0.5, lty = "longdash", color = "grey40") +
+  #geom_hline(yintercept = 0.8, lty = "longdash", color = "grey40") +
+  geom_point(size = 6, shape = 21, colour = "gray90", stroke = 1) +
+  geom_point(aes(x = Approach, y = Q1), size = 6, shape = 21, colour = "gray90", stroke = 1) +
+  geom_point(aes(x = Approach, y = Q3), size = 6, shape = 21, colour = "gray90", stroke = 1) +
+  # add text labels for Q1, Q2, Q3
+  geom_text(aes(x = Approach, y = Q1, label = Q1), hjust = 1.5, vjust = 0.5, size = 3, color = "black", fontface = "bold") +
+  geom_text(aes(x = Approach, y = Q2, label = Q2), hjust = 0.5, vjust = 0.5, size = 3, color = "black", fontface = "bold") +
+  geom_text(aes(x = Approach, y = Q3, label = Q3), hjust = -0.35, vjust = 0.5, size = 3, color = "black", fontface = "bold") +
+  scale_color_nejm() +
+  scale_fill_nejm() +
+  scale_y_continuous(limits = c(-0.1, 1.05), breaks = c(-0.1, 0.25, 0.5, 0.75, 1), 
+                     labels = c(0, 0.25, 0.5, 0.75, 1),  expand = c(0, 0.05)) +
+  theme_bw() +
+  guides(fill = "none", color = "none") +
+  labs(x = "", y = "Empirical effect size benchmark") +
+  theme(
+    axis.title = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    strip.text = element_text(size = 14, color = "black"),
+    plot.margin = unit(c(0, 0.8, 0.1, -0.5), 'cm')
+  ) +
+  ggforce::facet_col(
+    facets = ~Metric,
+    scales = "free_y",
+    space = "free",
+    strip.position = "top"
+  ) +
+  theme(strip.background = element_rect(fill = "white"))
+
+png(filename = "fig benchmark.png", width = 8, height = 8, units = "in", type = "windows", res = 400)
+p
+dev.off() 
+
+```
+
+# Comparison
+
+## Evidence
+
+```{r}
+# add a variable to indicate the presence of effect
+## SMD and zr
+est.naive_SMD.zr <- est.naive_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.twostep_SMD.zr <- est.twostep_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.petpeese_SMD.zr <- est.petpeese_SMD.zr %>% 
+  mutate(effect = case_when(p < 0.1 ~ "TRUE",
+                            p >= 0.1 ~ "FALSE"))
+
+est.robma_SMD.zr <- est.robma_SMD.zr %>%
+  mutate(effect = case_when(estimate.BF >= 3 ~ "TRUE",
+                         estimate.BF < 3 ~ "FALSE"))
+
+## lnRR
+est.naive_lnRR <- est.naive_lnRR %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.twostep_lnRR <- est.twostep_lnRR %>% 
+  mutate(effect = case_when(p < 0.05 ~ "TRUE",
+                            p >= 0.05 ~ "FALSE"))
+
+est.petpeese_lnRR <- est.petpeese_lnRR %>% 
+  mutate(effect = case_when(p < 0.1 ~ "TRUE",
+                            p >= 0.1 ~ "FALSE"))
+
+est.robma_lnRR <- est.robma_lnRR %>%
+  mutate(effect = case_when(estimate.BF >= 3 ~ "TRUE",
+                            estimate.BF < 3 ~ "FALSE"))
+
+# data frame
+test_data <- data.frame(naive = c(est.naive_SMD.zr$effect, est.naive_lnRR$effect),
+                         twostep = c(est.twostep_SMD.zr$effect, est.twostep_lnRR$effect),
+                         petpeese = c(est.petpeese_SMD.zr$effect, est.petpeese_lnRR$effect),
+                         robma = c(est.robma_SMD.zr$effect, est.robma_lnRR$effect))
+
+# effect size measure info
+es.measure1 <- sapply(dat_SMD.zr, function(x) x$grouped_es[1]) %>% as.character()
+es.measure2 <- sapply(dat_lnRR, function(x) x$grouped_es[1]) %>% as.character()
+test_data$es.measure <- c(es.measure1,es.measure2)
+
+# add publication bias info
+test_data$PSB <- c(est_SMD$PSB, est_zr$PSB, est_lnRR$PSB)
+# subset
+test_data2 <- test_data %>% filter(PSB == "Yes")
+test_data3 <- test_data %>% filter(PSB == "No")
+
+
+
+# write a function to compare the agreement of the presence of effect
+compute_agreement_sig <- function(test_data) {
+  methods <- c("naive", "twostep", "petpeese", "robma")
+  agreement_results <- list()
+  
+  for (ref in methods) {
+    pos_sig <- which(test_data[[ref]] == "TRUE")
+    test_data_sig <- test_data[pos_sig, ]
+    
+    ref_results <- list()
+    
+    for (comp in methods) {
+      if (ref != comp) {
+        ref_results[[comp]] <- sum(test_data_sig[[ref]] == test_data_sig[[comp]], na.rm = TRUE) / nrow(test_data_sig)
+      }
+    }
+    
+    agreement_results[[ref]] <- ref_results
+  }
+  
+  return(agreement_results)
+}
+
+# compute
+compute_agreement_sig(test_data)
+
+
+# write a function to compare the inter-rater reliability of the presence of effect
+compute_kappa_sig <- function(test_data, R = 1000) {
+  methods <- c("naive", "twostep", "petpeese", "robma")
+  
+  # Function to compute kappa for bootstrapping
+  kappa_stat <- function(data, indices) {
+    resampled_data <- data[indices, ]
+    kappa2(as.matrix(resampled_data), "unweighted")$value
+  }
+  
+  kappa_results <- list()
+  
+  for (ref in methods) {
+    pos_sig <- which(test_data[[ref]] == "TRUE")
+    test_data_sig <- test_data[pos_sig, ]
+    
+    ref_results <- list()
+    
+    for (comp in methods) {
+      if (ref != comp) {
+        # Compute Cohen's Kappa
+        kappa_value <- kappa2(as.matrix(test_data[, c(ref, comp)]), "unweighted")$value
+        
+        # Bootstrap Confidence Interval
+        set.seed(2025)
+        kappa_res <- boot(data = test_data[, c(ref, comp)], statistic = kappa_stat, R = R)
+        ci <- boot.ci(kappa_res, type = "perc")
+        
+        ref_results[[comp]] <- list(
+          "Kappa" = kappa_value,
+          "CI" = ci
+        )
+      }
+    }
+    
+    kappa_results[[ref]] <- ref_results
+  }
+  
+  return(kappa_results)
+}
+
+# compute 
+kappa_results_sig <- compute_kappa_sig(test_data)
+```
+
+
+## Sign
+
+```{r}
+# data frame
+test_data <- data.frame(naive = c(est.naive_SMD.zr$est, est.naive_lnRR$est),
+                         twostep = c(est.twostep_SMD.zr$est, est.twostep_lnRR$est),
+                         petpeese = c(est.petpeese_SMD.zr$est, est.petpeese_lnRR$est),
+                         robma = c(est.robma_SMD.zr$estimate.con, est.robma_lnRR$estimate.con))
+
+# write a function to compute the agreement rate of sign
+compute_sign_agreement <- function(test_data) {
+  methods <- c("naive", "twostep", "petpeese", "robma")
+  
+  # Initialize matrix to store agreement rates
+  agreement_results <- matrix(NA, nrow = length(methods), ncol = length(methods),
+                              dimnames = list(methods, methods))
+  
+  # Compute agreement rates
+  for (i in 1:length(methods)) {
+    for (j in 1:length(methods)) {
+      if (i != j) {
+        agreement_results[i, j] <- sum(sign(test_data[[methods[i]]]) == sign(test_data[[methods[j]]]), 
+                                       na.rm = TRUE) / nrow(test_data)
+      }
+    }
+  }
+  
+  return(round(agreement_results, 3))
+}
+
+# compute
+agreement_matrix <- compute_sign_agreement(test_data)
+
+# write a function to compute inter-rater reliability of sign
+compute_sign_kappa <- function(test_data, R = 1000) {
+  methods <- c("naive", "twostep", "petpeese", "robma")
+  
+  # Function to compute kappa for bootstrapping
+  kappa_stat <- function(data, indices) {
+    resampled_data <- data[indices, ]
+    kappa2(as.matrix(resampled_data), "unweighted")$value
+  }
+  
+  kappa_results <- list()
+  
+  for (i in 1:(length(methods) - 1)) {
+    for (j in (i + 1):length(methods)) {
+      pairwise_data <- test_data[, c(methods[i], methods[j])]
+      pairwise_data <- sign(pairwise_data)  # Convert to sign
+      
+      # Compute Cohen's Kappa
+      kappa_value <- kappa2(as.matrix(pairwise_data), "unweighted")$value
+      
+      # Bootstrap Confidence Interval
+      set.seed(2025)
+      kappa_res <- boot(data = pairwise_data, statistic = kappa_stat, R = R)
+      ci <- boot.ci(kappa_res, type = "perc")
+      
+      # Store results
+      kappa_results[[paste0(methods[i], "_vs_", methods[j])]] <- list(
+        "Kappa" = kappa_value,
+        "CI" = ci
+      )
+    }
+  }
+  
+  return(kappa_results)
+}
+
+kappa_results <- compute_sign_kappa(test_data)
+```
+
+
+
+## Estimation
+
+selection factor
+
+```{r}
+# relative deviation
+## remove outliers - out intuition tells us that it is almost impossible to see a SMD above 2 and lnRR > 2 in reality; therefore, we censor rows with SMD > 2 and lnRR > 2
+est_SMD$naive <- ifelse(est_SMD$naive > 2, 2, est_SMD$naive)
+est_SMD$naive <- ifelse(est_SMD$naive < -2, 2, est_SMD$naive)
+
+est_lnRR$naive <- ifelse(est_lnRR$naive > 2, 2, est_lnRR$naive)
+est_lnRR$naive <- ifelse(est_lnRR$naive < -2, 2, est_lnRR$naive)
+
+# data frame
+## get NA
+test_data <- data.frame(naive = c(est_SMD$naive, est_zr$naive, est_lnRR$naive),
+                         twostep = c(est_SMD$twostep, est_zr$twostep, est_lnRR$twostep),
+                         petpeese = c(est_SMD$petpeese, est_zr$petpeese, est_lnRR$petpeese),
+                         robma = c(est_SMD$robma, est_zr$robma, est_lnRR$robma)) %>% 
+  mutate(es.measure = c(as.character(est_SMD$es.measure), as.character(est_zr$es.measure), as.character(est_lnRR$es.measure)))
+
+
+# remove NA
+test_data <- na.omit(test_data)
+
+# Relative deviation quantifies the degree to which the average effect sizes in meta-analyses overestimate the bias-adjusted effect size estimates assuming the presence of the effect
+# https://osf.io/9rtsz
+relative_deviation <- function(adjusted, unadjusted, digits = 2){
+  of <- car::deltaMethod(
+    object = c(
+      m_adj   = mean(adjusted, na.rm = T),
+      m_unadj = mean(unadjusted, na.rm = T)),
+    vcov   = matrix(c(var(adjusted, na.rm = T) / length(adjusted[!is.na(adjusted)]), 0, 0, var(unadjusted, na.rm = T) / length(unadjusted[!is.na(unadjusted)])), nrow = 2, ncol = 2),
+    g      = "m_adj / m_unadj")
+
+  est <- of[,"Estimate"]
+  lCI <- of[,"2.5 %"]
+  uCI <- of[,"97.5 %"]
+
+  paste0(format(round(est, digits), nsmall = digits), " [", format(round(lCI, digits), nsmall = digits), ", ", format(round(uCI, digits), nsmall = digits), "]")
+}
+
+#relative_deviation(test_data$naive, test_data$twostep)
+#relative_deviation(test_data$naive, test_data$petpeese)
+#relative_deviation(test_data$naive, test_data$robma)
+
+relative_deviation(test_data$twostep, test_data$naive)
+relative_deviation(test_data$petpeese, test_data$naive)
+relative_deviation(test_data$robma, test_data$naive)
+
+
+# medians and interquartile ranges of per meta-analysis overestimation factors
+rd_iqr <- function(x, digits = 2){
+  est <- median(x, na.rm = TRUE)
+  lCI <- quantile(x, probs = 0.25, na.rm = TRUE)
+  uCI <- quantile(x, probs = 0.75, na.rm = TRUE)
+  paste0(format(round(est, digits), nsmall = digits), " (", format(round(lCI, digits), nsmall = digits), ", ", format(round(uCI, digits), nsmall = digits), ")")
+}
+
+rd_iqr(test_data$twostep / test_data$naive)
+rd_iqr(test_data$petpeese / test_data$naive)
+rd_iqr(test_data$robma / test_data$naive)
+
+
+# absolute deviation
+mean(est_SMD$twostep - est_SMD$naive, na.rm = T)
+
+mean(est_SMD$petpeese - est_SMD$naive, na.rm = T)
+mean(est_SMD$robma - est_SMD$naive, na.rm = T)
+
+mean(est_lnRR$twostep - est_lnRR$naive, na.rm = T)
+mean(est_lnRR$petpeese - est_lnRR$naive, na.rm = T)
+mean(est_lnRR$robma - est_lnRR$naive, na.rm = T)
+
+mean(est_zr$twostep - est_zr$naive, na.rm = T)
+mean(est_zr$petpeese - est_zr$naive, na.rm = T)
+mean(est_zr$robma - est_zr$naive, na.rm = T)
+
+```
+
+
+# Benchmarks
+
+## Distributional comparison
+
+```{r}
+# overall 
+## among naive and adjustments
+## data frame
+test_data <- data.frame(naive = c(est_SMD$naive, est_zr$naive, est_lnRR$naive),
+                         twostep = c(est_SMD$twostep, est_zr$twostep, est_lnRR$twostep),
+                         petpeese = c(est_SMD$petpeese, est_zr$petpeese, est_lnRR$petpeese),
+                         robma = c(est_SMD$robma, est_zr$robma, est_lnRR$robma))
+## test
+ks1 <- ksboot(abs(test_data$twostep), abs(test_data$naive), nboots = 1500)
+ks2 <- ksboot(abs(test_data$petpeese), abs(test_data$naive), nboots = 1500)
+ks3 <- ksboot(abs(test_data$robma), abs(test_data$naive), nboots = 1500)
+## among adjustments
+ks4 <- ksboot(abs(test_data$twostep), abs(test_data$petpeese), nboots = 1500)
+ks5 <- ksboot(abs(test_data$twostep), abs(test_data$robma), nboots = 1500)
+ks6 <- ksboot(abs(test_data$petpeese), abs(test_data$robma), nboots = 1500)
+
+#save(ks1, file = here("Dat", "ks1.rda"))
+#save(ks2, file = here("Dat", "ks2.rda"))
+#save(ks3, file = here("Dat", "ks3.rda"))
+#save(ks4, file = here("Dat", "ks4.rda"))
+#save(ks5, file = here("Dat", "ks5.rda"))
+#save(ks6, file = here("Dat", "ks6.rda"))
+
+# effect-size measure specific
+## among naive and adjustments
+## SMD
+ks7 <- ksboot(abs(est_SMD$twostep), abs(est_SMD$naive), nboots = 1500)
+ks8 <- ksboot(abs(est_SMD$petpeese), abs(est_SMD$naive), nboots = 1500)
+ks9 <- ksboot(abs(est_SMD$robma), abs(est_SMD$naive), nboots = 1500)
+## zr
+ks10 <- ksboot(abs(est_zr$twostep), abs(est_zr$naive), nboots = 1500)
+ks11 <- ksboot(abs(est_zr$petpeese), abs(est_zr$naive), nboots = 1500)
+ks12 <- ksboot(abs(est_zr$robma), abs(est_zr$naive), nboots = 1500)
+## lnRR
+ks13 <- ksboot(abs(est_lnRR$twostep), abs(est_lnRR$naive), nboots = 1500)
+ks14 <- ksboot(abs(est_lnRR$petpeese), abs(est_lnRR$naive), nboots = 1500)
+ks15 <- ksboot(abs(est_lnRR$robma), abs(est_lnRR$naive), nboots = 1500)
+
+## among adjustments
+## SMD
+ks16 <- ksboot(abs(est_SMD$twostep), abs(est_SMD$petpeese), nboots = 1500)
+ks17 <- ksboot(abs(est_SMD$twostep), abs(est_SMD$robma), nboots = 1500)
+ks18 <- ksboot(abs(est_SMD$robma), abs(est_SMD$petpeese), nboots = 1500)
+## zr
+ks19 <- ksboot(abs(est_zr$twostep), abs(est_zr$petpeese), nboots = 1500)
+ks20 <- ksboot(abs(est_zr$twostep), abs(est_zr$robma), nboots = 1500)
+ks21 <- ksboot(abs(est_zr$robma), abs(est_zr$petpeese), nboots = 1500)
+## lnRR
+ks22 <- ksboot(abs(est_lnRR$twostep), abs(est_lnRR$petpeese), nboots = 1500)
+ks23 <- ksboot(abs(est_lnRR$twostep), abs(est_lnRR$robma), nboots = 1500)
+ks24 <- ksboot(abs(est_lnRR$robma), abs(est_lnRR$petpeese), nboots = 1500)
+
+# save
+save(ks1, file = here("Dat", "ks1.rda"))
+save(ks2, file = here("Dat", "ks2.rda"))
+save(ks3, file = here("Dat", "ks3.rda"))
+save(ks4, file = here("Dat", "ks4.rda"))
+save(ks5, file = here("Dat", "ks5.rda"))
+save(ks6, file = here("Dat", "ks6.rda"))
+save(ks7, file = here("Dat", "ks6.rda"))
+save(ks8, file = here("Dat", "ks6.rda"))
+save(ks9, file = here("Dat", "ks6.rda"))
+save(ks10, file = here("Dat", "ks6.rda"))
+save(ks11, file = here("Dat", "ks6.rda"))
+save(ks12, file = here("Dat", "ks6.rda"))
+save(ks13, file = here("Dat", "ks6.rda"))
+save(ks14, file = here("Dat", "ks6.rda"))
+save(ks15, file = here("Dat", "ks6.rda"))
+save(ks16, file = here("Dat", "ks6.rda"))
+save(ks17, file = here("Dat", "ks6.rda"))
+save(ks18, file = here("Dat", "ks6.rda"))
+save(ks19, file = here("Dat", "ks6.rda"))
+save(ks20, file = here("Dat", "ks6.rda"))
+save(ks21, file = here("Dat", "ks6.rda"))
+save(ks22, file = here("Dat", "ks6.rda"))
+save(ks23, file = here("Dat", "ks6.rda"))
+save(ks24, file = here("Dat", "ks6.rda"))
+```
+
+## Empirical benchmarks
+
+```{r}
+# SMD
+data.frame(metric = replicate(3, "SMD"),
+  threshold = c("Small", "Medium", "Large"),
+  naive = summary(abs(est_SMD$naive))[c(2,3,5)] %>% as.numeric(),
+  twostep = summary(abs(est_SMD$twostep))[c(2,3,5)] %>% as.numeric(),
+  petpeese = summary(abs(est_SMD$petpeese))[c(2,3,5)] %>% as.numeric(),
+  robma = summary(abs(est_SMD$robma))[c(2,3,5)] %>% as.numeric()) %>% dfround(3)
+# r
+data.frame(metric = replicate(3, "r"),
+           threshold = c("Small", "Medium", "Large"),
+           naive = summary(abs(est_r$naive))[c(2,3,5)] %>% as.numeric(),
+           twostep = summary(abs(est_r$twostep))[c(2,3,5)] %>% as.numeric(),
+           petpeese = summary(abs(est_r$petpeese))[c(2,3,5)] %>% as.numeric(),
+           robma = summary(abs(est_r$robma))[c(2,3,5)] %>% as.numeric()) %>% dfround(3)
+# lnRR
+data.frame(metric = replicate(3, "lnRR"),
+           threshold = c("Small", "Medium", "Large"),
+           naive = summary(abs(est_lnRR$naive))[c(2,3,5)] %>% as.numeric(),
+           twostep = summary(abs(est_lnRR$twostep))[c(2,3,5)] %>% as.numeric(),
+           petpeese = summary(abs(est_lnRR$petpeese))[c(2,3,5)] %>% as.numeric(),
+           robma = summary(abs(est_lnRR$robma))[c(2,3,5)] %>% as.numeric()) %>% dfround(3)
+```
+
+# Additional analyses
+
+We also present some additional results to show the usefulness of robust Bayesian meta-analysis average (RoBMA-PSMA). Unlike PETPEESE-ISVCVW, which primarily tests for the absence of evidence of selective reporting, RoBMA-PSMA directly quantifies evidence of its presence vs. absence, supporting conclusions in ways other methods cannot. 
+
+We can get the Bayesian evidence against the presence of selective reporting:
+
+Overall: 
+```{r}
+dat.pb <- rbind(est_SMD, est_r, est_lnRR)
+length(which(dat.pb$BF_PSB < 1 / 3)) / nrow(dat.pb)
+```
+
+SMD:
+```{r}
+length(which(est_SMD$BF_PSB < 1 / 3)) / nrow(est_SMD)
+```
+
+r:
+```{r}
+length(which(est_r$BF_PSB < 1 / 3)) / nrow(est_r)
+```
+
+lnRR:
+```{r}
+length(which(est_lnRR$BF_PSB < 1 / 3)) / nrow(est_lnRR)
+```
+
+We can also get the Bayesian evidence for the presence of selective reporting:
+
+Overall:
+```{r}
+length(which(dat.pb$BF_PSB > 3)) / nrow(dat.pb)
+```
+
+SMD:
+```{r}
+length(which(est_SMD$BF_PSB > 3)) / nrow(est_SMD)
+```
+
+r:
+```{r}
+length(which(est_r$BF_PSB > 3)) / nrow(est_r)
+```
+
+lnRR:
+```{r}
+length(which(est_lnRR$BF_PSB > 3)) / nrow(est_lnRR)
+```
+
+# Supplementary plots
+
+## Figure S1
+
+```{r}
+# calibration 1
+# overall
+plot_data <- rbind(est_SMD, est_r, est_lnRR)
+p <- plot_data %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "twostep", x = "naive", color = "#E69F00", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 1: Two-step RPVE",
+    title = "Subset of publication bias"
+  ) +
+  scale_x_continuous(limits = c(-3,3)) +
+  scale_y_continuous(limits = c(-3,3)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# SMD
+p1 <- est_SMD %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "twostep", x = "naive", color = "#56B4E9", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 1: Two-step RPVE",
+    title = "Subset of of SMD with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-2,2)) +
+  scale_y_continuous(limits = c(-2,2)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# r
+p2 <- est_r %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "twostep", x = "naive", color = "#009E73", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 1: Two-step RPVE",
+    title = "Subset of of r with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# lnRR
+p3 <- est_lnRR %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "twostep", x = "naive", color = "#0072B2", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 1: Two-step RPVE",
+    title = "Subset of of lnRR with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+png(filename = "Figure S1.png", width = 10, height = 10, units = "in", type = "windows", res = 400)
+  p + p1 + p2 + p3 +
+  plot_layout(ncol = 2, nrow = 2, tag_level = 'new', guides = "collect") +  plot_annotation(tag_levels = list(c('A', "B", 'C', 'D'))) & theme(plot.tag = element_text(size = 15, face = "bold"), legend.position = "bottom") 
+dev.off()
+```
+
+## Figure S2
+
+```{r}
+# calibration 2
+# overall
+plot_data <- rbind(est_SMD, est_r, est_lnRR)
+p <- plot_data %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "petpeese", x = "naive", color = "#E69F00", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 2: PETPEESE-IVCVW",
+    title = "Subset of publication bias"
+  ) +
+  scale_x_continuous(limits = c(-3,3)) +
+  scale_y_continuous(limits = c(-3,3)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# SMD
+p1 <- est_SMD %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "petpeese", x = "naive", color = "#56B4E9", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 2: PETPEESE-IVCVW",
+    title = "Subset of of SMD with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-2,2)) +
+  scale_y_continuous(limits = c(-2,2)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# r
+p2 <- est_r %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "petpeese", x = "naive", color = "#009E73", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 2: PETPEESE-IVCVW",
+    title = "Subset of of r with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# lnRR
+p3 <- est_lnRR %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "petpeese", x = "naive", color = "#0072B2", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 2: PETPEESE-IVCVW",
+    title = "Subset of of lnRR with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+png(filename = "Figure S2.png", width = 10, height = 10, units = "in", type = "windows", res = 400)
+  p + p1 + p2 + p3 +
+  plot_layout(ncol = 2, nrow = 2, tag_level = 'new', guides = "collect") +  plot_annotation(tag_levels = list(c('A', "B", 'C', 'D'))) & theme(plot.tag = element_text(size = 15, face = "bold"), legend.position = "bottom") 
+dev.off()
+```
+
+## Figure S3
+
+```{r}
+# calibration 3
+# overall
+plot_data <- rbind(est_SMD, est_r, est_lnRR)
+p <- plot_data %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "robma", x = "naive", color = "#E69F00", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 3: RoBMA-PSMA",
+    title = "Subset of publication bias"
+  ) +
+  scale_x_continuous(limits = c(-3,3)) +
+  scale_y_continuous(limits = c(-3,3)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# SMD
+p1 <- est_SMD %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "robma", x = "naive", color = "#56B4E9", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 3: RoBMA-PSMA",
+    title = "Subset of of SMD with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-2,2)) +
+  scale_y_continuous(limits = c(-2,2)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# r
+p2 <- est_r %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "robma", x = "naive", color = "#009E73", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 3: RoBMA-PSMA",
+    title = "Subset of of r with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+# lnRR
+p3 <- est_lnRR %>% filter(PSB == "Yes") %>%
+  ggscatter(y = "robma", x = "naive", color = "#0072B2", size = "N") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+   labs(
+    y = "Naive: MLMA-SVCV model",
+    x = "Calibration 3: RoBMA-PSMA",
+    title = "Subset of of lnRR with publication bias"
+  ) +
+  scale_x_continuous(limits = c(-0.5,1)) +
+  scale_y_continuous(limits = c(-0.5,1)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+png(filename = "Figure S3.png", width = 10, height = 10, units = "in", type = "windows", res = 400)
+  p + p1 + p2 + p3 +
+  plot_layout(ncol = 2, nrow = 2, tag_level = 'new', guides = "collect") +  plot_annotation(tag_levels = list(c('A', "B", 'C', 'D'))) & theme(plot.tag = element_text(size = 15, face = "bold"), legend.position = "bottom") 
+dev.off()
+```
+
+
+# Session information
+
+- Session info--------------------------------------------------------------
+ setting  value                         
+ version  R version 4.0.3 (2020-10-10)  
+ os       Windows 10 x64                
+ system   x86_64, mingw32               
+ ui       RStudio                       
+ language En                            
+ tz       Australia/Sydney              
+ date     2025-03-11     
+
+- Packages ------------------------------------------------------------------
+ ! package      * version    date       lib source                           
+   abind          1.4-5      2016-07-21 [1] CRAN (R 4.0.3)                   
+   aplot        * 0.1.8      2022-10-09 [1] CRAN (R 4.0.3)                   
+   assertthat     0.2.1      2019-03-21 [1] CRAN (R 4.0.3)                   
+   backports      1.2.1      2020-12-09 [1] CRAN (R 4.0.3)                   
+   BayesTools     0.2.17     2024-02-20 [1] CRAN (R 4.0.3)                   
+   boot         * 1.3-28     2021-05-03 [1] CRAN (R 4.0.5)                   
+   brio           1.1.2      2021-04-23 [1] CRAN (R 4.0.5)                   
+   broom          1.0.1      2022-08-29 [1] CRAN (R 4.0.3)                   
+   cachem         1.0.6      2021-08-19 [1] CRAN (R 4.0.5)                   
+   callr          3.7.0      2021-04-20 [1] CRAN (R 4.0.5)                   
+   car            3.0-11     2021-06-27 [1] CRAN (R 4.0.5)                   
+   carData        3.0-4      2020-05-22 [1] CRAN (R 4.0.3)                   
+   cellranger     1.1.0      2016-07-27 [1] CRAN (R 4.0.3)                   
+   cli            3.4.1      2022-09-23 [1] CRAN (R 4.0.3)                   
+   clubSandwich * 0.5.11     2024-06-20 [1] CRAN (R 4.0.3)                   
+   coda           0.19-4     2020-09-30 [1] CRAN (R 4.0.5)                   
+   colorspace     2.0-0      2020-11-11 [1] CRAN (R 4.0.3)                   
+   ComplexUpset * 1.3.3      2021-12-11 [1] CRAN (R 4.0.5)                   
+   cowplot      * 1.1.1      2020-12-30 [1] CRAN (R 4.0.5)                   
+   crayon         1.4.1      2021-02-08 [1] CRAN (R 4.0.4)                   
+   curl           4.3.2      2021-06-23 [1] CRAN (R 4.0.5)                   
+   data.table     1.14.0     2021-02-21 [1] CRAN (R 4.0.5)                   
+   DBI            1.2.2      2024-02-16 [1] CRAN (R 4.0.3)                   
+   dbplyr         2.1.1      2021-04-06 [1] CRAN (R 4.0.5)                   
+   desc           1.3.0      2021-03-05 [1] CRAN (R 4.0.4)                   
+   devtools       2.4.2      2021-06-07 [1] CRAN (R 4.0.5)                   
+   digest         0.6.27     2020-10-24 [1] CRAN (R 4.0.3)                   
+   dplyr        * 1.0.10     2022-09-01 [1] CRAN (R 4.0.3)                   
+   ellipse        0.4.2      2020-05-27 [1] CRAN (R 4.0.3)                   
+   ellipsis       0.3.2      2021-04-29 [1] CRAN (R 4.0.5)                   
+   evaluate       0.14       2019-05-28 [1] CRAN (R 4.0.3)                   
+   fansi          0.5.0      2021-05-25 [1] CRAN (R 4.0.5)                   
+   farver         2.1.0      2021-02-28 [1] CRAN (R 4.0.5)                   
+   fastmap        1.1.0      2021-01-25 [1] CRAN (R 4.0.3)                   
+   forcats      * 0.5.2      2022-08-19 [1] CRAN (R 4.0.3)                   
+   foreign        0.8-81     2020-12-22 [1] CRAN (R 4.0.3)                   
+   fs             1.5.2      2021-12-08 [1] CRAN (R 4.0.5)                   
+   generics       0.1.0      2020-10-31 [1] CRAN (R 4.0.3)                   
+   ggforce        0.3.3      2021-03-05 [1] CRAN (R 4.0.5)                   
+   ggfun          0.0.8      2022-11-07 [1] CRAN (R 4.0.3)                   
+   ggplot2      * 3.4.4      2023-10-12 [1] CRAN (R 4.0.3)                   
+   ggplotify    * 0.0.9      2021-08-20 [1] CRAN (R 4.0.5)                   
+   ggpubr       * 0.4.0      2020-06-27 [1] CRAN (R 4.0.5)                   
+   ggsci        * 2.9        2018-05-14 [1] CRAN (R 4.0.3)                   
+   ggsignif       0.6.3      2021-09-09 [1] CRAN (R 4.0.5)                   
+   ggthemes     * 4.2.4      2021-01-20 [1] CRAN (R 4.0.5)                   
+   glue           1.6.2      2022-02-24 [1] CRAN (R 4.0.5)                   
+   gridExtra    * 2.3        2017-09-09 [1] CRAN (R 4.0.3)                   
+   gridGraphics   0.5-1      2020-12-13 [1] CRAN (R 4.0.3)                   
+   gtable         0.3.0      2019-03-25 [1] CRAN (R 4.0.3)                   
+   haven          2.4.3      2021-08-04 [1] CRAN (R 4.0.5)                   
+   here         * 1.0.1      2020-12-13 [1] CRAN (R 4.0.3)                   
+   hms            1.1.0      2021-05-17 [1] CRAN (R 4.0.5)                   
+   htmltools      0.5.2      2021-08-25 [1] CRAN (R 4.0.5)                   
+   httr           1.4.2      2020-07-20 [1] CRAN (R 4.0.3)                   
+   irr          * 0.84.1     2019-01-26 [1] CRAN (R 4.0.3)                   
+   janitor      * 2.1.0      2021-01-05 [1] CRAN (R 4.0.5)                   
+   jsonlite       1.7.2      2020-12-09 [1] CRAN (R 4.0.3)                   
+   kldtools     * 1.2        2021-11-15 [1] CRAN (R 4.0.5)                   
+   knitr        * 1.37       2021-12-16 [1] CRAN (R 4.0.5)                   
+   lattice        0.20-41    2020-04-02 [2] CRAN (R 4.0.3)                   
+   lavaan         0.6-9      2021-06-27 [1] CRAN (R 4.0.5)                   
+   lifecycle      1.0.3      2022-10-07 [1] CRAN (R 4.0.3)                   
+   lme4         * 1.1-26     2020-12-01 [1] CRAN (R 4.0.3)                   
+   lmtest         0.9-38     2020-09-09 [1] CRAN (R 4.0.5)                   
+   lpSolve      * 5.6.15     2020-01-24 [1] CRAN (R 4.0.3)                   
+   lubridate      1.7.10     2021-02-26 [1] CRAN (R 4.0.5)                   
+   magrittr       2.0.3      2022-03-30 [1] CRAN (R 4.0.5)                   
+   MASS           7.3-54     2021-05-03 [1] CRAN (R 4.0.5)                   
+   mathjaxr       1.2-0      2021-01-30 [2] CRAN (R 4.0.3)                   
+   Matrix       * 1.5-3      2022-11-11 [1] CRAN (R 4.0.3)                   
+   memoise        2.0.0      2021-01-26 [1] CRAN (R 4.0.3)                   
+   metadat      * 1.2-0      2022-04-06 [1] CRAN (R 4.0.3)                   
+   metafor      * 4.7-53     2024-11-21 [1] Github (wviechtb/metafor@02056a0)
+   metaSEM      * 1.3.0      2023-01-07 [1] CRAN (R 4.0.3)                   
+   minqa          1.2.4      2014-10-09 [1] CRAN (R 4.0.3)                   
+   mnormt         2.0.2      2020-09-01 [1] CRAN (R 4.0.3)                   
+   modelr         0.1.8      2020-05-19 [1] CRAN (R 4.0.3)                   
+   munsell        0.5.0      2018-06-12 [1] CRAN (R 4.0.3)                   
+   mvtnorm        1.1-3      2021-10-08 [1] CRAN (R 4.0.5)                   
+   nlme         * 3.1-151    2020-12-10 [1] CRAN (R 4.0.3)                   
+   nloptr         1.2.2.2    2020-07-02 [1] CRAN (R 4.0.3)                   
+   numDeriv     * 2016.8-1.1 2019-06-06 [1] CRAN (R 4.0.3)                   
+   OpenMx       * 2.20.6     2022-03-09 [1] CRAN (R 4.0.5)                   
+   openxlsx       4.2.4      2021-06-16 [1] CRAN (R 4.0.5)                   
+   pacman         0.5.1      2019-03-11 [1] CRAN (R 4.0.3)                   
+   pander         0.6.4      2021-06-13 [1] CRAN (R 4.0.5)                   
+   patchwork    * 1.1.1      2020-12-17 [1] CRAN (R 4.0.5)                   
+   pbivnorm       0.6.0      2015-01-23 [1] CRAN (R 4.0.3)                   
+   pillar         1.8.1      2022-08-19 [1] CRAN (R 4.0.3)                   
+   pkgbuild       1.2.0      2020-12-15 [1] CRAN (R 4.0.3)                   
+   pkgconfig      2.0.3      2019-09-22 [1] CRAN (R 4.0.3)                   
+   pkgload        1.2.1      2021-04-06 [1] CRAN (R 4.0.5)                   
+   plyr           1.8.6      2020-03-03 [1] CRAN (R 4.0.3)                   
+   polyclip       1.10-0     2019-03-14 [1] CRAN (R 4.0.3)                   
+   prettyunits    1.1.1      2020-01-24 [1] CRAN (R 4.0.3)                   
+   processx       3.5.2      2021-04-30 [1] CRAN (R 4.0.5)                   
+   ps             1.6.0      2021-02-28 [1] CRAN (R 4.0.5)                   
+   purrr        * 0.3.4      2020-04-17 [1] CRAN (R 4.0.3)                   
+   R6             2.5.1      2021-08-19 [1] CRAN (R 4.0.5)                   
+   rbibutils      2.2.11     2022-12-08 [1] CRAN (R 4.0.3)                   
+   RColorBrewer * 1.1-3      2022-04-03 [1] CRAN (R 4.0.5)                   
+   Rcpp           1.0.13     2024-07-17 [1] CRAN (R 4.0.3)                   
+ D RcppParallel   5.1.4      2021-05-04 [1] CRAN (R 4.0.5)                   
+   Rdpack         2.4        2022-07-20 [1] CRAN (R 4.0.3)                   
+   readr        * 2.1.2      2022-01-30 [1] CRAN (R 4.0.5)                   
+   readxl       * 1.3.1      2019-03-13 [1] CRAN (R 4.0.3)                   
+   remotes        2.5.0      2024-03-17 [1] CRAN (R 4.0.3)                   
+   reprex         2.0.1      2021-08-05 [1] CRAN (R 4.0.5)                   
+   rio            0.5.29     2021-11-22 [1] CRAN (R 4.0.5)                   
+   rjags          4-13       2022-04-19 [1] CRAN (R 4.0.5)                   
+   rlang          1.1.1      2023-04-28 [1] CRAN (R 4.0.3)                   
+   rmarkdown      2.11       2021-09-14 [1] CRAN (R 4.0.5)                   
+   RoBMA        * 2.2.2      2022-04-20 [1] CRAN (R 4.0.5)                   
+   rprojroot      2.0.2      2020-11-15 [1] CRAN (R 4.0.3)                   
+   rstatix        0.7.0      2021-02-13 [1] CRAN (R 4.0.4)                   
+   rstudioapi     0.13       2020-11-12 [1] CRAN (R 4.0.3)                   
+   runjags        2.2.1-7    2022-04-15 [1] CRAN (R 4.0.5)                   
+   rvest          1.0.1      2021-07-26 [1] CRAN (R 4.0.5)                   
+   sandwich       3.0-1      2021-05-18 [1] CRAN (R 4.0.5)                   
+   scales         1.2.1      2022-08-20 [1] CRAN (R 4.0.3)                   
+   sessioninfo    1.1.1      2018-11-05 [1] CRAN (R 4.0.3)                   
+   snakecase      0.11.0     2019-05-25 [1] CRAN (R 4.0.3)                   
+   statmod        1.4.35     2020-10-19 [1] CRAN (R 4.0.3)                   
+   stringi        1.7.4      2021-08-25 [1] CRAN (R 4.0.5)                   
+   stringr      * 1.5.0      2022-12-02 [1] CRAN (R 4.0.3)                   
+   testthat       3.1.3      2022-03-29 [1] CRAN (R 4.0.5)                   
+   tibble       * 3.1.8      2022-07-22 [1] CRAN (R 4.0.3)                   
+   tidyr        * 1.2.1      2022-09-08 [1] CRAN (R 4.0.3)                   
+   tidyselect     1.2.0      2022-10-10 [1] CRAN (R 4.0.3)                   
+   tidyverse    * 1.3.1      2021-04-15 [1] CRAN (R 4.0.5)                   
+   tmvnsim        1.0-2      2016-12-15 [1] CRAN (R 4.0.3)                   
+   tweenr         1.0.2      2021-03-23 [1] CRAN (R 4.0.5)                   
+   tzdb           0.1.2      2021-07-20 [1] CRAN (R 4.0.5)                   
+   UpSetR       * 1.4.0      2019-05-22 [1] CRAN (R 4.0.5)                   
+   usethis        2.0.1      2021-02-10 [1] CRAN (R 4.0.4)                   
+   utf8           1.2.2      2021-07-24 [1] CRAN (R 4.0.5)                   
+   vcd          * 1.4-10     2022-06-09 [1] CRAN (R 4.0.3)                   
+   vctrs          0.5.0      2022-10-22 [1] CRAN (R 4.0.3)                   
+   wesanderson  * 0.3.6      2018-04-20 [1] CRAN (R 4.0.5)                   
+   withr          2.5.0      2022-03-03 [1] CRAN (R 4.0.5)                   
+   xfun           0.29       2021-12-14 [1] CRAN (R 4.0.5)                   
+   xml2           1.3.2      2020-04-23 [1] CRAN (R 4.0.3)                   
+   yaml           2.2.1      2020-02-01 [1] CRAN (R 4.0.3)                   
+   yulab.utils    0.0.5      2022-06-30 [1] CRAN (R 4.0.3)                   
+   zip            2.2.0      2021-05-31 [1] CRAN (R 4.0.5)                   
+   zoo            1.8-9      2021-03-09 [1] CRAN (R 4.0.4)   
+
+
+```{r}
+pander::pander(sessionInfo())
+```
