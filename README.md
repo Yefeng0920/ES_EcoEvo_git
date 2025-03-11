@@ -27,23 +27,23 @@ The repository contains the following folders:
 
 ### `Dat` folder
 
-The `Dat` folder includes the datasets that are necessary for repruducing all anayses and figures reported in our paper. The data are in the format of `.rda` and `.csv`.
+The `Dat` folder includes the datasets that are necessary for reproducing all analyses and figures reported in our paper. The data are in the format of `.rda` and `.csv`.
 
 - `ecoevo_yefeng.Rds`
 
-The 441 meta-analysis datasets that are retreived from the published meta-analysis papers. 
+The 441 meta-analysis datasets that are retrieved from the published meta-analysis papers. 
 
 - `dat_ecoevo_SMD.zr.rds`
 
-The subset of `ecoevo_yefeng.Rds` that use `SMD` (`n = 192`) and `r` (`n = 134`) as the effect size measure. 
+The subset of `ecoevo_yefeng.Rds` that uses `SMD` (`n = 192`) and `r` (`n = 134`) as the effect size measure. 
 
 - `dat_ecoevo_lnRR.rds`
 
-The subset of `ecoevo_yefeng.Rds` that use `lnRR` (`n = 115`) as the effect size measure. 
+The subset of `ecoevo_yefeng.Rds` that uses `lnRR` (`n = 115`) as the effect size measure. 
 
 - `robma_SMD.zr.csv` and `robma_lnRR.csv`
 
-The model estimates derived from the robust Bayesian meta-analysis approaches. Given that running Bayesian models takes a long while, we pre-extracted the model estimates to save time. All original `R` code to fit models and extract estimates is available at `Script`.
+The model estimates derived from the robust Bayesian meta-analysis approaches. Since running Bayesian models takes a long while, we pre-extracted the model estimates to save time. All original `R` code to fit models and extract estimates is available at `Script`.
 
 
 **Credit:**
@@ -57,7 +57,7 @@ Owing to journals’ mandatory open data policies and the widespread adoption of
 
 ### `Figure`
 
-The `Figure` folder includes all figures that are reported in the main body and supplementary materials.
+The `Figure` folder includes all figures reported in the main body and supplementary materials.
 
 
 ### `Script` folder
@@ -68,7 +68,9 @@ The scripts are formatted in the format of Rmarkdown (`Rmd`).
 
 - `Main4.Rmd`
 
-The main `R` code replicating all analyses and results (e.g., figures reported in `Figure`).
+The main `R` code replicating all analyses and results (e.g., figures reported in `Figure`). 
+
+The `R` code is clearly structured and documented for the purpose of reproducibility:
 
 - `Preprocess.Rmd`
 
@@ -84,6 +86,7 @@ The files in this dataset are licensed under the Creative Commons Attribution 4.
 - Dr. Yefeng Yang
 
 School of Biological, Earth and Environmental Sciences, BEES
+
 The University of New South Wales, Sydney, Australia
 
 Email: yefeng.yang1@unsw.edu.au
