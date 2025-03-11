@@ -1,0 +1,84 @@
+---
+title: "Untitled"
+output: html_document
+date: '2025-01-02'
+---
+
+# Package
+
+```{r setup, echo = FALSE}
+# tidy
+ # rm(list=ls())
+ # graphics.off()
+# prepare workspace
+knitr::opts_chunk$set(echo = TRUE, include = TRUE)
+# load packages
+pacman::p_load(knitr,
+               readxl, 
+               readr, 
+               metafor, 
+               dplyr, 
+               tidyverse,
+               clubSandwich,
+               janitor, 
+               cowplot, 
+               ggpubr,
+               gridExtra,
+               here,
+               nlme,
+               lme4,
+               RoBMA,
+               lmerTest,
+               vcd,
+               tidyr,
+               raincloudplots,
+               ggthemes,
+               RColorBrewer,
+               wesanderson,
+               ggsci,
+               ggplotify,
+               aplot
+               )
+
+```
+
+
+# Preprocess
+
+```{r}
+# load data
+data_main <- readRDS(here("Dat", "ecoevo_yefeng.Rds"))
+
+# subset of SMD and Zr - only select relevant variables
+dat <- list()
+for (i in seq_along(data_main)) {
+  filtered_df <- data_main[[i]] %>%
+    select(study, eff.size, var.eff.size, obs, grouped_es) %>%
+    filter(grouped_es %in% c("SMD", "Zr"))
+  
+  # only keep the data frame if it has rows after filtering
+  if (nrow(filtered_df) > 0) {
+    dat[[length(dat) + 1]] <- filtered_df
+  }
+}
+
+#saveRDS(dat, file = "dat_ecoevo.rds")
+dat_SMD.zr <- readRDS(here("Dat", "dat_ecoevo.rds"))
+
+# subset of lnRR - only select relevant variables
+dat <- list()
+for (i in seq_along(data_main)) {
+  filtered_df <- data_main[[i]] %>%
+    select(study, eff.size, var.eff.size, obs, grouped_es) %>%
+    filter(grouped_es %in% c("lnRR"))
+  
+  # only keep the data frame if it has rows after filtering
+  if (nrow(filtered_df) > 0) {
+    dat[[length(dat) + 1]] <- filtered_df
+  }
+}
+
+saveRDS(dat, file = "dat_ecoevo_lnRR.rds")
+
+dat_lnRR <- readRDS(here("Dat", "dat_ecoevo_lnRR.rds"))
+```
