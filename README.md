@@ -1,5 +1,9 @@
 # Calibrating effect size interpretation in ecology and evolution: A quantitative synthesis of 100,000 observations
 
+![image](https://github.com/user-attachments/assets/5865907a-479d-41f5-9479-3fd36e4a3d76)
+
+*Figure legend: Effect size interpretation strategies in ecology and evolution.* 
+
 ## Transparency declaration
 
 The authors affirm that the manuscript is an honest, accurate, and transparent account of the study being reported, and no important
